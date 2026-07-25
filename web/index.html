@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Spending</title>
+
+  <!-- PWA / iOS home-screen icon -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#4338CA" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Spending" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+
+  <!-- Your own Convex backend URL (edit config.js) -->
+  <script src="config.js"></script>
+
+  <!-- Plaid Link (must be online to connect a bank) -->
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+
+  <style>
+    :root {
+      color-scheme: light dark;
+      --plane: #f9f9f7;
+      --surface: #ffffff;
+      --surface-2: #f4f4f2;
+      --ink: #0b0b0b;
+      --ink-2: #52514e;
+      --muted: #898781;
+      --hair: rgba(11, 11, 11, 0.10);
+      --brand: #4338CA;
+      --brand-2: #7C3AED;
+      --good: #006300;
+
+      /* validated categorical slots (light) */
+      --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+      --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+      --sother: #b8b6ae;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:where(:not([data-theme="light"])) {
+        --plane: #0d0d0d;
+        --surface: #1a1a19;
+        --surface-2: #242422;
+        --ink: #ffffff;
+        --ink-2: #c3c2b7;
+        --muted: #898781;
+        --hair: rgba(255, 255, 255, 0.10);
+        --brand: #6d5cf0;
+        --brand-2: #9085e9;
+        --good: #0ca30c;
+        --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+        --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+        --sother: #6b6a64;
+      }
+    }
+    :root[data-theme="dark"] {
+      --plane: #0d0d0d; --surface: #1a1a19; --surface-2: #242422;
+      --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+      --hair: rgba(255, 255, 255, 0.10);
+      --brand: #6d5cf0; --brand-2: #9085e9; --good: #0ca30c;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+      --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+      --sother: #6b6a64;
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--plane);
+      color: var(--ink);
+      min-height: 100vh;
+      padding: max(env(safe-area-inset-top), 12px) 16px calc(env(safe-area-inset-bottom) + 32px);
+      -webkit-font-smoothing: antialiased;
+    }
+    .app { max-width: 560px; margin: 0 auto; }
+
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 2px 14px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.02em; }
+    .brand .logo {
+      width: 30px; height: 30px; border-radius: 8px;
+      background: linear-gradient(135deg, #4338CA, #7C3AED);
+      display: grid; place-items: center; flex: none;
+    }
+    .brand .logo span { display: flex; gap: 2px; align-items: flex-end; }
+    .brand .logo i { width: 3px; background: #fff; border-radius: 2px 2px 0 0; display: block; }
+    .brand .logo i:nth-child(1) { height: 7px; } .brand .logo i:nth-child(2) { height: 11px; } .brand .logo i:nth-child(3) { height: 15px; }
+    .icon-btn {
+      appearance: none; border: 1px solid var(--hair); background: var(--surface);
+      color: var(--ink-2); width: 40px; height: 40px; border-radius: 12px; font-size: 18px;
+      display: grid; place-items: center; cursor: pointer;
+    }
+    .icon-btn:active { transform: scale(0.94); }
+    .icon-btn.spin { animation: spin 0.9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--hair);
+      border-radius: 18px; padding: 18px; margin-bottom: 14px;
+    }
+    .card h2 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 14px; }
+
+    /* range chips */
+    .ranges { display: flex; gap: 8px; margin-bottom: 14px; }
+    .ranges button {
+      flex: 1; appearance: none; border: 1px solid var(--hair); background: var(--surface);
+      color: var(--ink-2); border-radius: 12px; padding: 10px 0; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    }
+    .ranges button[aria-selected="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+
+    /* hero */
+    .hero { text-align: center; padding: 6px 0 2px; }
+    .hero .label { color: var(--muted); font-size: 0.85rem; }
+    .hero .amount { font-size: 3rem; font-weight: 800; letter-spacing: -0.03em; margin: 6px 0 2px; line-height: 1; }
+    .hero .sub { color: var(--ink-2); font-size: 0.9rem; }
+    .hero .sub b { color: var(--good); }
+
+    /* donut */
+    .donut-wrap { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+    .donut { --sz: 148px; width: var(--sz); height: var(--sz); border-radius: 50%; flex: none; position: relative; margin: 0 auto; }
+    .donut::after {
+      content: ""; position: absolute; inset: 26px; border-radius: 50%; background: var(--surface);
+    }
+    .donut-center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; z-index: 1; }
+    .donut-center .c-amt { font-weight: 800; font-size: 1.05rem; letter-spacing: -0.02em; }
+    .donut-center .c-lbl { font-size: 0.7rem; color: var(--muted); }
+
+    .legend { flex: 1; min-width: 190px; display: flex; flex-direction: column; gap: 2px; }
+    .legend .row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--hair); }
+    .legend .row:last-child { border-bottom: 0; }
+    .legend .sw { width: 12px; height: 12px; border-radius: 4px; flex: none; }
+    .legend .name { flex: 1; font-size: 0.92rem; }
+    .legend .name .pct { color: var(--muted); font-size: 0.8rem; margin-left: 6px; }
+    .legend .val { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 0.92rem; }
+
+    /* bar list (merchants / months) */
+    .barlist { display: flex; flex-direction: column; gap: 12px; }
+    .barlist .item .top { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; font-size: 0.92rem; }
+    .barlist .item .top .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .barlist .track { height: 8px; background: var(--surface-2); border-radius: 6px; overflow: hidden; }
+    .barlist .fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--brand), var(--brand-2)); }
+
+    /* transactions */
+    .txn { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hair); }
+    .txn:last-child { border-bottom: 0; }
+    .txn .emoji { width: 36px; height: 36px; border-radius: 10px; background: var(--surface-2); display: grid; place-items: center; font-size: 18px; flex: none; }
+    .txn .meta { flex: 1; min-width: 0; }
+    .txn .meta .n { font-weight: 600; font-size: 0.94rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .txn .meta .d { color: var(--muted); font-size: 0.8rem; }
+    .txn .amt { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .txn .amt.in { color: var(--good); }
+
+    .btn {
+      display: block; width: 100%; appearance: none; border: 0; cursor: pointer;
+      background: linear-gradient(135deg, #4338CA, #7C3AED); color: #fff;
+      font-size: 1rem; font-weight: 700; padding: 15px; border-radius: 14px; margin-top: 4px;
+    }
+    .btn:active { transform: scale(0.99); }
+    .btn.ghost { background: none; color: var(--ink-2); border: 1px solid var(--hair); }
+
+    .empty { text-align: center; padding: 20px 10px; }
+    .empty .big { font-size: 2.6rem; }
+    .empty p { color: var(--ink-2); margin: 8px 0 18px; line-height: 1.5; }
+
+    .banks .b { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--hair); font-size: 0.92rem; }
+    .banks .b:last-child { border-bottom: 0; }
+    .banks .b .sync { color: var(--muted); font-size: 0.78rem; }
+    .banks .b button { background: none; border: 0; color: #e34948; font-size: 0.82rem; cursor: pointer; }
+
+    .note { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
+    .toast {
+      position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom) + 18px);
+      background: var(--ink); color: var(--plane); padding: 10px 18px; border-radius: 999px; font-size: 0.88rem;
+      opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 50; max-width: 90%;
+    }
+    .toast.show { opacity: 1; }
+    .skel { color: var(--muted); text-align: center; padding: 24px; }
+    input.sync-in {
+      width: 100%; padding: 13px 14px; border-radius: 12px; border: 1px solid var(--hair);
+      background: var(--surface-2); color: var(--ink); font-size: 1rem; margin: 8px 0 4px;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <div class="brand">
+        <span class="logo"><span><i></i><i></i><i></i></span></span>
+        Spending
+      </div>
+      <button class="icon-btn" id="refreshBtn" title="Refresh from your bank" aria-label="Refresh">&#8635;</button>
+    </div>
+
+    <!-- ONBOARDING: enter sync code -->
+    <div id="onboard" class="card hidden">
+      <div class="empty">
+        <div class="big">&#128273;</div>
+        <p>Enter a private <b>sync code</b> — any secret phrase. It's how this app finds your data across devices. Use the same code on every device.</p>
+        <input class="sync-in" id="syncInput" placeholder="e.g. a phrase only you know" autocapitalize="off" autocorrect="off" />
+        <button class="btn" id="syncSave">Continue</button>
+        <p class="note" style="margin-top:14px">Anyone with this code can see your spending, so make it long and private — not just your email.</p>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div id="main" class="hidden">
+      <div class="ranges" id="ranges">
+        <button data-days="7">7 days</button>
+        <button data-days="30" aria-selected="true">30 days</button>
+        <button data-days="90">90 days</button>
+      </div>
+
+      <div id="content"><div class="skel">Loading…</div></div>
+
+      <div class="card banks-card hidden" id="banksCard">
+        <h2>Linked banks</h2>
+        <div class="banks" id="banksList"></div>
+        <button class="btn ghost" id="addBankBtn" style="margin-top:14px">+ Link another bank</button>
+      </div>
+
+      <p class="note" id="footNote" style="text-align:center; margin-top:18px"></p>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script type="module">
+    import { ConvexHttpClient } from "https://esm.sh/convex@1.29.1/browser";
+
+    // This app's OWN Convex backend. Set in config.js.
+    const CONVEX_URL = window.SPENDING_CONVEX_URL;
+    const CONFIGURED = CONVEX_URL && CONVEX_URL !== "PASTE_YOUR_CONVEX_URL_HERE";
+    const convex = CONFIGURED ? new ConvexHttpClient(CONVEX_URL) : null;
+
+    // ---- category presentation (Plaid personal_finance_category.primary) ----
+    const CATS = {
+      FOOD_AND_DRINK:            { label: "Food & Drink",   emoji: "🍔", slot: "s1" },
+      GENERAL_MERCHANDISE:       { label: "Shopping",       emoji: "🛍️", slot: "s2" },
+      TRANSPORTATION:            { label: "Transport",      emoji: "🚗", slot: "s3" },
+      TRAVEL:                    { label: "Travel",         emoji: "✈️", slot: "s4" },
+      ENTERTAINMENT:             { label: "Entertainment",  emoji: "🎬", slot: "s5" },
+      RENT_AND_UTILITIES:        { label: "Bills & Utilities", emoji: "🏠", slot: "s6" },
+      GENERAL_SERVICES:          { label: "Services",       emoji: "🧾", slot: "s7" },
+      MEDICAL:                   { label: "Health",         emoji: "⚕️", slot: "s8" },
+      PERSONAL_CARE:             { label: "Personal Care",  emoji: "🧴", slot: "sother" },
+      HOME_IMPROVEMENT:          { label: "Home",           emoji: "🔨", slot: "sother" },
+      LOAN_PAYMENTS:             { label: "Loans",          emoji: "🏦", slot: "sother" },
+      BANK_FEES:                 { label: "Fees",           emoji: "💸", slot: "sother" },
+      GOVERNMENT_AND_NON_PROFIT: { label: "Gov & Charity",  emoji: "🏛️", slot: "sother" },
+      INCOME:                    { label: "Income",         emoji: "💰", slot: "sother" },
+      OTHER:                     { label: "Other",          emoji: "📦", slot: "sother" },
+    };
+    const catInfo = (key) => CATS[key] || { label: titleCase(key), emoji: "📦", slot: "sother" };
+    function titleCase(s) {
+      return String(s || "Other").toLowerCase().replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
+    // ---- state ----
+    const KEY_STORE = "spending_synckey";
+    let syncKey = localStorage.getItem(KEY_STORE) || "";
+    let days = 30;
+    let currency = "USD";
+
+    const $ = (id) => document.getElementById(id);
+    const fmt = (n) =>
+      new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 0 }).format(n || 0);
+    const fmt2 = (n) =>
+      new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: 2 }).format(n || 0);
+
+    let toastTimer;
+    function toast(msg, ms = 2600) {
+      const t = $("toast"); t.textContent = msg; t.classList.add("show");
+      clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), ms);
+    }
+
+    // ---- onboarding ----
+    function showOnboard() { $("onboard").classList.remove("hidden"); $("main").classList.add("hidden"); }
+    function showMain() { $("onboard").classList.add("hidden"); $("main").classList.remove("hidden"); }
+
+    $("syncSave").addEventListener("click", () => {
+      const v = $("syncInput").value.trim();
+      if (v.length < 4) { toast("Use at least 4 characters."); return; }
+      syncKey = v; localStorage.setItem(KEY_STORE, v);
+      showMain(); boot();
+    });
+
+    // ---- range chips ----
+    $("ranges").addEventListener("click", (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      days = Number(b.dataset.days);
+      [...$("ranges").children].forEach((c) => c.setAttribute("aria-selected", c === b ? "true" : "false"));
+      loadDashboard();
+    });
+
+    // ---- refresh (pull fresh data from the bank via Plaid) ----
+    $("refreshBtn").addEventListener("click", () => refresh(true));
+
+    async function refresh(manual) {
+      const btn = $("refreshBtn"); btn.classList.add("spin");
+      try {
+        const r = await convex.action("plaid:syncTransactions", { syncKey });
+        await loadDashboard();
+        if (manual) toast(r.items ? "Up to date" : "No banks linked yet");
+      } catch (e) {
+        if (manual) toast(friendlyError(e));
+      } finally {
+        btn.classList.remove("spin");
+      }
+    }
+
+    function friendlyError(e) {
+      const m = String(e && e.message ? e.message : e);
+      if (m.includes("not configured")) return "Plaid keys not set yet — see README.";
+      return "Couldn't reach your bank. Try again.";
+    }
+
+    // ---- connect a bank via Plaid Link ----
+    async function connectBank() {
+      if (typeof Plaid === "undefined") { toast("Plaid Link didn't load. Check your connection."); return; }
+      let linkToken;
+      try {
+        const r = await convex.action("plaid:createLinkToken", { syncKey });
+        linkToken = r.linkToken;
+      } catch (e) { toast(friendlyError(e)); return; }
+
+      const handler = Plaid.create({
+        token: linkToken,
+        onSuccess: async (public_token, metadata) => {
+          toast("Linking…");
+          try {
+            await convex.action("plaid:exchangePublicToken", {
+              syncKey,
+              publicToken: public_token,
+              institutionName: metadata && metadata.institution ? metadata.institution.name : undefined,
+            });
+            toast("Bank linked!");
+            await loadDashboard();
+          } catch (e) { toast(friendlyError(e)); }
+        },
+        onExit: (err) => { if (err) toast("Link cancelled."); },
+      });
+      handler.open();
+    }
+
+    // ---- render ----
+    async function loadDashboard() {
+      const content = $("content");
+      try {
+        const [summary, items, txns] = await Promise.all([
+          convex.query("plaid:spendingSummary", { syncKey, days }),
+          convex.query("plaid:listItems", { syncKey }),
+          convex.query("plaid:recentTransactions", { syncKey, limit: 30 }),
+        ]);
+        currency = summary.currency || "USD";
+
+        if (!items.length) { renderEmpty(); return; }
+
+        renderBanks(items);
+        content.innerHTML =
+          renderHero(summary) +
+          renderDonut(summary) +
+          renderMerchants(summary) +
+          renderMonths(summary) +
+          renderTxns(txns);
+
+        const last = items.map((i) => i.lastSyncedAt).filter(Boolean).sort().pop();
+        $("footNote").textContent = last
+          ? "Last updated " + new Date(last).toLocaleString() + " · auto-refreshes daily"
+          : "Auto-refreshes daily";
+      } catch (e) {
+        content.innerHTML = '<div class="card"><div class="skel">' + friendlyError(e) + "</div></div>";
+      }
+    }
+
+    function renderEmpty() {
+      $("banksCard").classList.add("hidden");
+      $("footNote").textContent = "";
+      $("content").innerHTML =
+        '<div class="card"><div class="empty">' +
+        '<div class="big">🏦</div>' +
+        "<p>Link a bank account and I'll show you exactly what you're spending your money on — by category, merchant and month.</p>" +
+        '<button class="btn" id="connectEmpty">Connect a bank</button>' +
+        '<p class="note" style="margin-top:14px">Secured by Plaid. Your bank login never touches this app.</p>' +
+        "</div></div>";
+      $("connectEmpty").addEventListener("click", connectBank);
+    }
+
+    function renderHero(s) {
+      const net = s.totalIncome - s.totalSpent;
+      const netStr = net >= 0
+        ? '<b>+' + fmt(net) + "</b> left over"
+        : fmt(Math.abs(net)) + " over income";
+      return (
+        '<div class="card"><div class="hero">' +
+        '<div class="label">Spent in the last ' + s.days + " days</div>" +
+        '<div class="amount">' + fmt(s.totalSpent) + "</div>" +
+        '<div class="sub">' + s.transactionCount + " purchases · " +
+        (s.totalIncome > 0 ? "income " + fmt(s.totalIncome) + " · " + netStr : "link income to see net") +
+        "</div></div></div>"
+      );
+    }
+
+    function renderDonut(s) {
+      if (!s.categories.length) return "";
+      const total = s.totalSpent || 1;
+      // top 7 hued slices + Other
+      const top = s.categories.slice(0, 7);
+      const restSum = s.categories.slice(7).reduce((a, c) => a + c.amount, 0);
+      const slices = top.map((c) => ({ ...c, info: catInfo(c.label) }));
+      if (restSum > 0) slices.push({ label: "OTHER", amount: restSum, info: { label: "Other", emoji: "📦", slot: "sother" } });
+
+      let acc = 0;
+      const stops = slices.map((sl) => {
+        const start = (acc / total) * 100;
+        acc += sl.amount;
+        const end = (acc / total) * 100;
+        return "var(--" + sl.info.slot + ") " + start.toFixed(2) + "% " + end.toFixed(2) + "%";
+      }).join(", ");
+
+      const legend = slices.map((sl) => {
+        const pct = Math.round((sl.amount / total) * 100);
+        return (
+          '<div class="row"><span class="sw" style="background:var(--' + sl.info.slot + ')"></span>' +
+          '<span class="name">' + sl.info.emoji + " " + sl.info.label +
+          '<span class="pct">' + pct + "%</span></span>" +
+          '<span class="val">' + fmt(sl.amount) + "</span></div>"
+        );
+      }).join("");
+
+      return (
+        '<div class="card"><h2>Where it goes</h2><div class="donut-wrap">' +
+        '<div class="donut" style="background:conic-gradient(' + stops + ')">' +
+        '<div class="donut-center"><div class="c-amt">' + fmt(s.totalSpent) + '</div><div class="c-lbl">total</div></div>' +
+        "</div>" +
+        '<div class="legend">' + legend + "</div>" +
+        "</div></div>"
+      );
+    }
+
+    function renderMerchants(s) {
+      if (!s.merchants.length) return "";
+      const max = s.merchants[0].amount || 1;
+      const rows = s.merchants.slice(0, 6).map((m) => (
+        '<div class="item"><div class="top"><span>' + escapeHtml(m.label) + '</span><span class="v">' + fmt2(m.amount) + "</span></div>" +
+        '<div class="track"><div class="fill" style="width:' + Math.max(4, (m.amount / max) * 100) + '%"></div></div></div>'
+      )).join("");
+      return '<div class="card"><h2>Top merchants</h2><div class="barlist">' + rows + "</div></div>";
+    }
+
+    function renderMonths(s) {
+      if (s.months.length < 2) return "";
+      const max = Math.max(...s.months.map((m) => m.amount)) || 1;
+      const rows = s.months.map((m) => {
+        const label = new Date(m.month + "-01").toLocaleDateString(undefined, { month: "short", year: "numeric" });
+        return (
+          '<div class="item"><div class="top"><span>' + label + '</span><span class="v">' + fmt(m.amount) + "</span></div>" +
+          '<div class="track"><div class="fill" style="width:' + Math.max(4, (m.amount / max) * 100) + '%"></div></div></div>'
+        );
+      }).join("");
+      return '<div class="card"><h2>By month</h2><div class="barlist">' + rows + "</div></div>";
+    }
+
+    function renderTxns(txns) {
+      if (!txns.length) return "";
+      const rows = txns.map((t) => {
+        const info = catInfo(t.category);
+        const isIn = t.amount < 0;
+        const amt = (isIn ? "+" : "") + fmt2(Math.abs(t.amount));
+        const d = new Date(t.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        return (
+          '<div class="txn"><div class="emoji">' + info.emoji + "</div>" +
+          '<div class="meta"><div class="n">' + escapeHtml(t.name) + (t.pending ? " · pending" : "") + "</div>" +
+          '<div class="d">' + d + " · " + info.label + "</div></div>" +
+          '<div class="amt' + (isIn ? " in" : "") + '">' + amt + "</div></div>"
+        );
+      }).join("");
+      return '<div class="card"><h2>Recent transactions</h2>' + rows + "</div>";
+    }
+
+    function renderBanks(items) {
+      $("banksCard").classList.remove("hidden");
+      $("banksList").innerHTML = items.map((i) => (
+        '<div class="b"><span>' + escapeHtml(i.institutionName) +
+        (i.lastSyncedAt ? ' <span class="sync">· ' + timeAgo(i.lastSyncedAt) + "</span>" : "") +
+        '</span><button data-item="' + i.itemId + '">Unlink</button></div>'
+      )).join("");
+      $("banksList").querySelectorAll("button").forEach((b) =>
+        b.addEventListener("click", () => unlink(b.dataset.item))
+      );
+    }
+
+    $("addBankBtn").addEventListener("click", connectBank);
+
+    async function unlink(itemId) {
+      if (!confirm("Unlink this bank and delete its transactions from this app?")) return;
+      try {
+        await convex.action("plaid:unlinkItem", { syncKey, itemId });
+        toast("Bank unlinked.");
+        await loadDashboard();
+      } catch (e) { toast(friendlyError(e)); }
+    }
+
+    // ---- helpers ----
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+    function timeAgo(ts) {
+      const s = Math.floor((Date.now() - ts) / 1000);
+      if (s < 60) return "just now";
+      if (s < 3600) return Math.floor(s / 60) + "m ago";
+      if (s < 86400) return Math.floor(s / 3600) + "h ago";
+      return Math.floor(s / 86400) + "d ago";
+    }
+
+    // ---- boot ----
+    async function boot() {
+      await loadDashboard();
+      // Kick a background sync so tapping the icon always shows fresh numbers.
+      refresh(false);
+    }
+
+    if (!CONFIGURED) {
+      $("onboard").classList.add("hidden");
+      $("main").classList.remove("hidden");
+      $("banksCard").classList.add("hidden");
+      $("ranges").classList.add("hidden");
+      $("content").innerHTML =
+        '<div class="card"><div class="empty">' +
+        '<div class="big">⚙️</div>' +
+        "<p>Almost there. Open <b>config.js</b> and paste your Convex deployment URL " +
+        "(printed by <code>npx convex dev</code>), then reload. See the README for the 15-minute setup.</p>" +
+        "</div></div>";
+    } else if (!syncKey) {
+      showOnboard();
+    } else {
+      showMain();
+      boot();
+    }
+
+    // register service worker for installability + offline shell
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+    }
+  </script>
+</body>
+</html>
