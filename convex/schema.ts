@@ -54,4 +54,20 @@ export default defineSchema({
     .index("by_syncKey", ["syncKey"])
     .index("by_transactionId", ["transactionId"])
     .index("by_syncKey_and_date", ["syncKey", "date"]),
+
+  // Monthly spending cap per category (Plaid primary category).
+  budgets: defineTable({
+    syncKey: v.string(),
+    category: v.string(),
+    monthlyLimit: v.number(),
+  }).index("by_syncKey", ["syncKey"]),
+
+  // Per-transaction "business" tag for expense separation / tax export.
+  transactionTags: defineTable({
+    syncKey: v.string(),
+    transactionId: v.string(),
+    isBusiness: v.boolean(),
+  })
+    .index("by_syncKey", ["syncKey"])
+    .index("by_transactionId", ["transactionId"]),
 });

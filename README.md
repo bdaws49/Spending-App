@@ -20,9 +20,19 @@ long-lived access token lives only on the Convex server, never in the browser.
   Shopping, Bills, Transport, …)
 - **Top merchants** and **spend by month**
 - **Recent transactions** feed
+- **Account picker** — view one account or all combined
+- **Credit-card watch** — how much you've put on credit cards this month (goal $0)
+- **Subscription finder** — surfaces recurring charges so you can cancel unused ones
+- **Monthly budgets** — set a cap per category with an over-budget alert
+- **Business tagging + CSV export** — mark business expenses and export for taxes
+- **Passcode lock** (with optional Face ID / fingerprint) so the app is protected
+  on your phone
 - **Daily auto-refresh** (a Convex cron) so the number is fresh when you open it,
   plus a manual refresh button (↻)
 - Installs to the iPhone home screen with its own app icon
+
+Accurate by design: internal transfers and credit-card bill payments are excluded
+from spending totals, so moving money around or paying a card never double-counts.
 
 ## Project layout
 

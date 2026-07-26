@@ -191,9 +191,85 @@
       background: var(--surface-2); color: var(--ink); font-size: 1rem; margin: 8px 0 4px;
     }
     .hidden { display: none !important; }
+
+    /* lock screen */
+    .lock {
+      position: fixed; inset: 0; z-index: 100; background: var(--plane);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 24px; text-align: center;
+    }
+    .lock .lock-logo {
+      width: 54px; height: 54px; border-radius: 14px; margin-bottom: 18px;
+      background: linear-gradient(135deg, #4338CA, #7C3AED);
+      display: grid; place-items: center;
+    }
+    .lock .lock-logo span { display: flex; gap: 3px; align-items: flex-end; }
+    .lock .lock-logo i { width: 5px; background: #fff; border-radius: 2px 2px 0 0; display: block; }
+    .lock .lock-logo i:nth-child(1){height:11px;} .lock .lock-logo i:nth-child(2){height:17px;} .lock .lock-logo i:nth-child(3){height:24px;}
+    .lock .lock-title { font-weight: 700; font-size: 1.1rem; margin-bottom: 18px; }
+    .lock .dots { display: flex; gap: 14px; margin-bottom: 26px; }
+    .lock .dots span { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--muted); }
+    .lock .dots span.on { background: var(--brand); border-color: var(--brand); }
+    .keypad { display: grid; grid-template-columns: repeat(3, 76px); gap: 16px; }
+    .keypad button {
+      height: 76px; border-radius: 50%; border: 1px solid var(--hair); background: var(--surface);
+      color: var(--ink); font-size: 1.6rem; cursor: pointer;
+    }
+    .keypad button:active { background: var(--surface-2); }
+    .keypad button.blank { border: 0; background: none; cursor: default; }
+    .lock .lock-msg { color: #e34948; font-size: 0.9rem; min-height: 20px; margin-top: 16px; }
+    .lock .bio { margin-top: 18px; background: none; border: 0; color: var(--brand); font-weight: 600; font-size: 0.95rem; cursor: pointer; }
+
+    /* watch tile */
+    .watch { display: flex; align-items: center; gap: 14px; }
+    .watch .wemoji { font-size: 26px; }
+    .watch .wlabel { color: var(--muted); font-size: 0.82rem; }
+    .watch .wamt { font-size: 1.8rem; font-weight: 800; letter-spacing: -0.02em; }
+    .watch .wsub { color: var(--ink-2); font-size: 0.85rem; margin-top: 2px; }
+    .watch .wamt.zero { color: var(--good); }
+
+    /* budgets */
+    .budget { margin-bottom: 14px; }
+    .budget .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; font-size: 0.92rem; }
+    .budget .top .cap { color: var(--muted); font-size: 0.82rem; }
+    .budget .top .del { color: var(--muted); background: none; border: 0; cursor: pointer; font-size: 0.9rem; margin-left: 8px; }
+    .budget .track { height: 8px; background: var(--surface-2); border-radius: 6px; overflow: hidden; }
+    .budget .fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--brand), var(--brand-2)); }
+    .budget .fill.over { background: #e34948; }
+    .budget.overbudget .top { color: #e34948; }
+    .budget-add { display: flex; gap: 8px; margin-top: 6px; }
+    .budget-add select, .budget-add input {
+      flex: 1; min-width: 0; padding: 10px; border-radius: 10px; border: 1px solid var(--hair);
+      background: var(--surface-2); color: var(--ink); font-size: 0.9rem;
+    }
+    .budget-add button { border: 0; background: var(--brand); color: #fff; border-radius: 10px; padding: 0 16px; font-weight: 600; cursor: pointer; }
+
+    /* business toggle on transactions */
+    .txn .biz { border: 0; background: none; cursor: pointer; font-size: 15px; opacity: 0.32; padding: 4px; }
+    .txn .biz.on { opacity: 1; }
+
+    /* settings buttons */
+    .setrow { display: flex; gap: 10px; flex-wrap: wrap; }
+    .setrow button {
+      flex: 1; min-width: 140px; appearance: none; border: 1px solid var(--hair); background: var(--surface);
+      color: var(--ink-2); border-radius: 12px; padding: 12px; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    }
+    .setrow button:active { background: var(--surface-2); }
+    .bizfilter { display:flex; align-items:center; gap:8px; margin-bottom:12px; font-size:0.9rem; color:var(--ink-2); }
+    .bizfilter input { width:16px; height:16px; }
   </style>
 </head>
 <body>
+  <!-- Passcode lock overlay -->
+  <div class="lock hidden" id="lockScreen">
+    <div class="lock-logo"><span><i></i><i></i><i></i></span></div>
+    <div class="lock-title" id="lockTitle">Enter passcode</div>
+    <div class="dots" id="lockDots"><span></span><span></span><span></span><span></span></div>
+    <div class="keypad" id="keypad"></div>
+    <button class="bio hidden" id="bioBtn">Unlock with Face ID</button>
+    <div class="lock-msg" id="lockMsg"></div>
+  </div>
+
   <div class="app">
     <div class="topbar">
       <div class="brand">
@@ -232,6 +308,15 @@
         <h2>Linked banks</h2>
         <div class="banks" id="banksList"></div>
         <button class="btn ghost" id="addBankBtn" style="margin-top:14px">+ Link another bank</button>
+      </div>
+
+      <div class="card hidden" id="settingsCard">
+        <h2>Settings &amp; export</h2>
+        <div class="setrow">
+          <button id="lockToggleBtn">Enable passcode lock</button>
+          <button id="exportBtn">Download CSV</button>
+          <button id="exportBizBtn">Business expenses CSV</button>
+        </div>
       </div>
 
       <p class="note" id="footNote" style="text-align:center; margin-top:18px"></p>
@@ -280,6 +365,7 @@
     let days = 30;
     let currency = "USD";
     let selectedAccount = null; // null = all accounts combined
+    let businessOnly = false;   // transaction list filter
 
     const $ = (id) => document.getElementById(id);
     const fmt = (n) =>
@@ -366,11 +452,14 @@
     async function loadDashboard() {
       const content = $("content");
       try {
-        const [summary, items, txns, accounts] = await Promise.all([
+        const [summary, items, txns, accounts, watch, subs, budgets] = await Promise.all([
           convex.query("plaid:spendingSummary", { syncKey, days, accountId: selectedAccount || undefined }),
           convex.query("plaid:listItems", { syncKey }),
-          convex.query("plaid:recentTransactions", { syncKey, limit: 30, accountId: selectedAccount || undefined }),
+          convex.query("plaid:recentTransactions", { syncKey, limit: 40, accountId: selectedAccount || undefined }),
           convex.query("plaid:listAccounts", { syncKey }),
+          convex.query("features:creditCardWatch", { syncKey }),
+          convex.query("features:subscriptions", { syncKey }),
+          convex.query("features:getBudgets", { syncKey }),
         ]);
         currency = summary.currency || "USD";
 
@@ -378,12 +467,18 @@
 
         renderAccountSelector(accounts);
         renderBanks(items);
+        $("settingsCard").classList.remove("hidden");
+        updateLockButton();
         content.innerHTML =
           renderHero(summary) +
+          renderVisaWatch(watch) +
           renderDonut(summary) +
+          renderBudgets(budgets, summary) +
           renderMerchants(summary) +
+          renderSubscriptions(subs) +
           renderMonths(summary) +
           renderTxns(txns);
+        wireContentHandlers(summary);
 
         const last = items.map((i) => i.lastSyncedAt).filter(Boolean).sort().pop();
         $("footNote").textContent = last
@@ -423,6 +518,7 @@
 
     function renderEmpty() {
       $("banksCard").classList.add("hidden");
+      $("settingsCard").classList.add("hidden");
       $("acctRow").classList.add("hidden");
       $("footNote").textContent = "";
       $("content").innerHTML =
@@ -512,7 +608,8 @@
 
     function renderTxns(txns) {
       if (!txns.length) return "";
-      const rows = txns.map((t) => {
+      const shown = businessOnly ? txns.filter((t) => t.isBusiness) : txns;
+      const rows = shown.map((t) => {
         const info = catInfo(t.category);
         const isIn = t.amount < 0;
         const amt = (isIn ? "+" : "") + fmt2(Math.abs(t.amount));
@@ -521,10 +618,15 @@
           '<div class="txn"><div class="emoji">' + info.emoji + "</div>" +
           '<div class="meta"><div class="n">' + escapeHtml(t.name) + (t.pending ? " · pending" : "") + "</div>" +
           '<div class="d">' + d + " · " + info.label + "</div></div>" +
+          '<button class="biz' + (t.isBusiness ? " on" : "") + '" data-txnid="' + t.transactionId +
+          '" data-biz="' + (t.isBusiness ? "1" : "0") + '" title="Mark as business expense">💼</button>' +
           '<div class="amt' + (isIn ? " in" : "") + '">' + amt + "</div></div>"
         );
       }).join("");
-      return '<div class="card"><h2>Recent transactions</h2>' + rows + "</div>";
+      const filter =
+        '<label class="bizfilter"><input type="checkbox" id="bizFilter"' +
+        (businessOnly ? " checked" : "") + "> Show business expenses only 💼</label>";
+      return '<div class="card"><h2>Recent transactions</h2>' + filter + rows + "</div>";
     }
 
     function renderBanks(items) {
@@ -538,6 +640,145 @@
         b.addEventListener("click", () => unlink(b.dataset.item))
       );
     }
+
+    // ---- credit-card watch tile ----
+    function renderVisaWatch(w) {
+      if (!w || !w.hasCreditCard) return "";
+      const zero = w.thisMonth <= 0;
+      const sub = zero
+        ? "Nothing on the card this month — keep it up! 🎉"
+        : "Last month: " + fmt(w.lastMonth) + " · goal is $0";
+      return (
+        '<div class="card"><div class="watch">' +
+        '<div class="wemoji">💳</div><div>' +
+        '<div class="wlabel">On your credit card this month</div>' +
+        '<div class="wamt' + (zero ? " zero" : "") + '">' + fmt(w.thisMonth) + "</div>" +
+        '<div class="wsub">' + sub + "</div>" +
+        "</div></div></div>"
+      );
+    }
+
+    // ---- subscriptions ----
+    function renderSubscriptions(s) {
+      if (!s || !s.subs.length) return "";
+      const rows = s.subs.map((x) => (
+        '<div class="txn"><div class="emoji">🔁</div>' +
+        '<div class="meta"><div class="n">' + escapeHtml(x.merchant) + "</div>" +
+        '<div class="d">' + x.count + " charges · last " +
+        new Date(x.lastDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
+        "</div></div>" +
+        '<div class="amt">' + fmt2(x.amount) + "</div></div>"
+      )).join("");
+      return (
+        '<div class="card"><h2>Recurring &amp; subscriptions</h2>' + rows +
+        '<p class="note" style="margin-top:10px">Estimated ~' + fmt(s.totalMonthly) +
+        "/mo in recurring charges. Cancel any you don't use.</p></div>"
+      );
+    }
+
+    // ---- budgets ----
+    function renderBudgets(data, summary) {
+      const budgets = (data && data.budgets) || [];
+      let rows = "";
+      let overCount = 0;
+      for (const b of budgets) {
+        const pct = b.monthlyLimit > 0 ? Math.min(100, (b.spent / b.monthlyLimit) * 100) : 0;
+        const over = b.spent > b.monthlyLimit;
+        if (over) overCount++;
+        const info = catInfo(b.category);
+        rows +=
+          '<div class="budget' + (over ? " overbudget" : "") + '">' +
+          '<div class="top"><span>' + info.emoji + " " + info.label +
+          '</span><span><span class="cap">' + fmt(b.spent) + " / " + fmt(b.monthlyLimit) +
+          '</span><button class="del" data-delcat="' + b.category + '" title="Remove budget">✕</button></span></div>' +
+          '<div class="track"><div class="fill' + (over ? " over" : "") + '" style="width:' + Math.max(3, pct) + '%"></div></div></div>';
+      }
+      // category options for adding a budget (only ones not already budgeted)
+      const budgeted = new Set(budgets.map((b) => b.category));
+      const opts = (summary.categories || [])
+        .filter((c) => !budgeted.has(c.label))
+        .map((c) => {
+          const info = catInfo(c.label);
+          return '<option value="' + c.label + '">' + info.emoji + " " + info.label + "</option>";
+        }).join("");
+      const alert = overCount
+        ? '<p class="note" style="color:#e34948;margin-bottom:10px">⚠️ Over budget in ' + overCount + " categor" + (overCount > 1 ? "ies" : "y") + " this month.</p>"
+        : "";
+      const addForm = opts
+        ? '<div class="budget-add"><select id="budCat"><option value="" disabled selected>Add a budget…</option>' + opts +
+          '</select><input id="budAmt" type="number" inputmode="numeric" placeholder="$/mo" min="1"><button id="budAdd">Set</button></div>'
+        : "";
+      if (!rows && !addForm) return "";
+      return '<div class="card"><h2>Monthly budgets</h2>' + alert + rows + addForm + "</div>";
+    }
+
+    // wire handlers for elements rendered inside #content
+    function wireContentHandlers(summary) {
+      const bf = $("bizFilter");
+      if (bf) bf.onchange = () => { businessOnly = bf.checked; loadDashboard(); };
+
+      $("content").querySelectorAll(".biz").forEach((btn) => {
+        btn.onclick = async () => {
+          const makeBiz = btn.dataset.biz !== "1";
+          try {
+            await convex.mutation("features:setTag", {
+              syncKey, transactionId: btn.dataset.txnid, isBusiness: makeBiz,
+            });
+            btn.classList.toggle("on", makeBiz);
+            btn.dataset.biz = makeBiz ? "1" : "0";
+            toast(makeBiz ? "Marked as business" : "Unmarked");
+          } catch (e) { toast(friendlyError(e)); }
+        };
+      });
+
+      const budAdd = $("budAdd");
+      if (budAdd) budAdd.onclick = async () => {
+        const cat = $("budCat").value;
+        const amt = Number($("budAmt").value);
+        if (!cat || !amt || amt <= 0) { toast("Pick a category and amount."); return; }
+        try {
+          await convex.mutation("features:setBudget", { syncKey, category: cat, monthlyLimit: amt });
+          await loadDashboard();
+        } catch (e) { toast(friendlyError(e)); }
+      };
+
+      $("content").querySelectorAll("[data-delcat]").forEach((btn) => {
+        btn.onclick = async () => {
+          try {
+            await convex.mutation("features:deleteBudget", { syncKey, category: btn.dataset.delcat });
+            await loadDashboard();
+          } catch (e) { toast(friendlyError(e)); }
+        };
+      });
+    }
+
+    // ---- CSV export ----
+    function toCsv(rows) {
+      const head = ["Date", "Description", "Amount", "Category", "Account", "Business"];
+      const esc = (v) => '"' + String(v).replace(/"/g, '""') + '"';
+      const lines = [head.join(",")];
+      for (const r of rows) {
+        lines.push([r.date, r.name, r.amount, r.category, r.account, r.isBusiness ? "Yes" : "No"].map(esc).join(","));
+      }
+      return lines.join("\n");
+    }
+    async function exportCsv(businessOnlyExport) {
+      try {
+        const rows = await convex.query("features:exportTransactions", {
+          syncKey, days: 365, businessOnly: businessOnlyExport,
+        });
+        if (!rows.length) { toast("Nothing to export yet."); return; }
+        const blob = new Blob([toCsv(rows)], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = (businessOnlyExport ? "business-expenses" : "transactions") + ".csv";
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) { toast(friendlyError(e)); }
+    }
+    $("exportBtn").addEventListener("click", () => exportCsv(false));
+    $("exportBizBtn").addEventListener("click", () => exportCsv(true));
 
     $("addBankBtn").addEventListener("click", connectBank);
 
@@ -562,6 +803,140 @@
       return Math.floor(s / 86400) + "d ago";
     }
 
+    // ---- passcode lock ----
+    const PIN_KEY = "spending_pin_hash";
+    let pinBuffer = "";
+    let lockMode = "unlock"; // unlock | set1 | set2 | disable
+    let firstPin = "";
+
+    async function sha256(s) {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+      return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    }
+    function hasPin() { return !!localStorage.getItem(PIN_KEY); }
+    function updateLockButton() {
+      const b = $("lockToggleBtn");
+      if (b) b.textContent = hasPin() ? "Change / remove passcode" : "Enable passcode lock";
+    }
+    function setDots(n) {
+      const d = $("lockDots").children;
+      for (let i = 0; i < d.length; i++) d[i].classList.toggle("on", i < n);
+    }
+    function buildKeypad() {
+      const kp = $("keypad");
+      if (kp.dataset.built) return;
+      kp.dataset.built = "1";
+      const keys = ["1","2","3","4","5","6","7","8","9","","0","⌫"];
+      kp.innerHTML = keys.map((k) =>
+        k === "" ? '<button class="blank" disabled></button>'
+                 : '<button data-k="' + k + '">' + k + "</button>"
+      ).join("");
+      kp.querySelectorAll("button[data-k]").forEach((btn) =>
+        btn.addEventListener("click", () => pinPress(btn.dataset.k)));
+    }
+    function pinPress(k) {
+      $("lockMsg").textContent = "";
+      if (k === "⌫") { pinBuffer = pinBuffer.slice(0, -1); setDots(pinBuffer.length); return; }
+      if (pinBuffer.length >= 4) return;
+      pinBuffer += k; setDots(pinBuffer.length);
+      if (pinBuffer.length === 4) setTimeout(handlePinComplete, 120);
+    }
+    async function handlePinComplete() {
+      const entered = pinBuffer; pinBuffer = ""; setDots(0);
+      const hash = await sha256(entered);
+      if (lockMode === "unlock") {
+        if (hash === localStorage.getItem(PIN_KEY)) hideLock();
+        else $("lockMsg").textContent = "Wrong passcode";
+      } else if (lockMode === "set1") {
+        firstPin = entered; lockMode = "set2";
+        $("lockTitle").textContent = "Re-enter to confirm";
+      } else if (lockMode === "set2") {
+        if (entered === firstPin) {
+          localStorage.setItem(PIN_KEY, hash);
+          updateLockButton(); toast("Passcode enabled");
+          if (await bioAvailable() && confirm("Also enable Face ID / fingerprint unlock?")) {
+            await bioEnroll();
+          }
+          hideLock();
+        } else {
+          lockMode = "set1"; firstPin = "";
+          $("lockTitle").textContent = "Didn't match — create passcode";
+        }
+      } else if (lockMode === "disable") {
+        if (hash === localStorage.getItem(PIN_KEY)) {
+          localStorage.removeItem(PIN_KEY);
+          localStorage.removeItem("spending_bio");
+          localStorage.removeItem("spending_bio_id");
+          updateLockButton(); toast("Passcode removed"); hideLock();
+        } else $("lockMsg").textContent = "Wrong passcode";
+      }
+    }
+    function showLock(mode) {
+      buildKeypad();
+      lockMode = mode; pinBuffer = ""; firstPin = ""; setDots(0);
+      $("lockMsg").textContent = "";
+      $("lockTitle").textContent =
+        mode === "unlock" ? "Enter passcode" :
+        mode === "disable" ? "Enter passcode to remove" : "Create a 4-digit passcode";
+      $("bioBtn").classList.toggle("hidden",
+        !(mode === "unlock" && localStorage.getItem("spending_bio") === "1"));
+      $("lockScreen").classList.remove("hidden");
+    }
+    function hideLock() { $("lockScreen").classList.add("hidden"); }
+    function maybeLock() { if (hasPin()) showLock("unlock"); }
+
+    // Face ID / fingerprint (best-effort; passcode is always the fallback).
+    function randBytes(n) { const a = new Uint8Array(n); crypto.getRandomValues(a); return a; }
+    async function bioAvailable() {
+      try {
+        return !!(window.PublicKeyCredential &&
+          await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());
+      } catch { return false; }
+    }
+    async function bioEnroll() {
+      try {
+        const cred = await navigator.credentials.create({ publicKey: {
+          challenge: randBytes(32),
+          rp: { name: "Spending", id: location.hostname },
+          user: { id: randBytes(16), name: syncKey || "user", displayName: "Spending" },
+          pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+          authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "required" },
+          timeout: 60000,
+        }});
+        localStorage.setItem("spending_bio_id", btoa(String.fromCharCode(...new Uint8Array(cred.rawId))));
+        localStorage.setItem("spending_bio", "1");
+        toast("Face ID unlock enabled");
+        return true;
+      } catch (e) { console.warn("bio enroll failed", e); toast("Face ID setup skipped"); return false; }
+    }
+    async function bioUnlock() {
+      try {
+        const idB64 = localStorage.getItem("spending_bio_id");
+        if (!idB64) return false;
+        const rawId = Uint8Array.from(atob(idB64), (c) => c.charCodeAt(0));
+        await navigator.credentials.get({ publicKey: {
+          challenge: randBytes(32),
+          allowCredentials: [{ type: "public-key", id: rawId }],
+          userVerification: "required", rpId: location.hostname, timeout: 60000,
+        }});
+        return true;
+      } catch (e) { console.warn("bio unlock failed", e); return false; }
+    }
+    $("bioBtn").addEventListener("click", async () => {
+      if (await bioUnlock()) hideLock();
+      else $("lockMsg").textContent = "Face ID failed — use passcode";
+    });
+    $("lockToggleBtn").addEventListener("click", () => {
+      if (hasPin()) {
+        if (confirm("Remove your passcode? (Cancel to set a new one instead.)")) showLock("disable");
+        else showLock("set1");
+      } else showLock("set1");
+    });
+    // Re-lock whenever the app is sent to the background.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden" && hasPin()) showLock("unlock");
+    });
+
     // ---- boot ----
     async function boot() {
       await loadDashboard();
@@ -584,6 +959,7 @@
       showOnboard();
     } else {
       showMain();
+      maybeLock();
       boot();
     }
 

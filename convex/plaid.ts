@@ -516,15 +516,26 @@ export const recentTransactions = query({
     const txns = args.accountId
       ? all.filter((t) => t.accountId === args.accountId)
       : all;
+
+    const tags = await ctx.db
+      .query("transactionTags")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+      .collect();
+    const businessSet = new Set(
+      tags.filter((t) => t.isBusiness).map((t) => t.transactionId)
+    );
+
     return txns
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, limit)
       .map((t) => ({
+        transactionId: t.transactionId,
         name: t.merchantName || t.name,
         amount: Math.round(t.amount * 100) / 100,
         date: t.date,
         category: t.category,
         pending: t.pending,
+        isBusiness: businessSet.has(t.transactionId),
       }));
   },
 });
