@@ -110,6 +110,15 @@
     }
     .ranges button[aria-selected="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
 
+    /* account selector */
+    .acctrow { margin-bottom: 14px; }
+    .acctrow select {
+      width: 100%; appearance: none; border: 1px solid var(--hair); background: var(--surface);
+      color: var(--ink); border-radius: 12px; padding: 12px 38px 12px 14px; font-size: 0.95rem; font-weight: 600;
+      cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23898781' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 14px center;
+    }
+
     /* hero */
     .hero { text-align: center; padding: 6px 0 2px; }
     .hero .label { color: var(--muted); font-size: 0.85rem; }
@@ -213,6 +222,10 @@
         <button data-days="90">90 days</button>
       </div>
 
+      <div class="acctrow hidden" id="acctRow">
+        <select id="acctSelect" aria-label="Account"></select>
+      </div>
+
       <div id="content"><div class="skel">Loading…</div></div>
 
       <div class="card banks-card hidden" id="banksCard">
@@ -266,6 +279,7 @@
     let syncKey = localStorage.getItem(KEY_STORE) || "";
     let days = 30;
     let currency = "USD";
+    let selectedAccount = null; // null = all accounts combined
 
     const $ = (id) => document.getElementById(id);
     const fmt = (n) =>
@@ -352,15 +366,17 @@
     async function loadDashboard() {
       const content = $("content");
       try {
-        const [summary, items, txns] = await Promise.all([
-          convex.query("plaid:spendingSummary", { syncKey, days }),
+        const [summary, items, txns, accounts] = await Promise.all([
+          convex.query("plaid:spendingSummary", { syncKey, days, accountId: selectedAccount || undefined }),
           convex.query("plaid:listItems", { syncKey }),
-          convex.query("plaid:recentTransactions", { syncKey, limit: 30 }),
+          convex.query("plaid:recentTransactions", { syncKey, limit: 30, accountId: selectedAccount || undefined }),
+          convex.query("plaid:listAccounts", { syncKey }),
         ]);
         currency = summary.currency || "USD";
 
         if (!items.length) { renderEmpty(); return; }
 
+        renderAccountSelector(accounts);
         renderBanks(items);
         content.innerHTML =
           renderHero(summary) +
@@ -378,8 +394,36 @@
       }
     }
 
+    // Show a picker only when there's more than one account to choose between.
+    function renderAccountSelector(accounts) {
+      const row = $("acctRow");
+      const sel = $("acctSelect");
+      if (!accounts || accounts.length < 2) {
+        row.classList.add("hidden");
+        selectedAccount = null;
+        return;
+      }
+      // If the selected account disappeared (e.g. after unlink), reset to All.
+      if (selectedAccount && !accounts.find((a) => a.accountId === selectedAccount)) {
+        selectedAccount = null;
+      }
+      const label = (a) => {
+        const base = a.name || a.subtype || "Account";
+        return a.institutionName + " · " + base + (a.mask ? " ••" + a.mask : "");
+      };
+      sel.innerHTML =
+        '<option value="">All accounts combined</option>' +
+        accounts
+          .map((a) => '<option value="' + a.accountId + '">' + escapeHtml(label(a)) + "</option>")
+          .join("");
+      sel.value = selectedAccount || "";
+      sel.onchange = () => { selectedAccount = sel.value || null; loadDashboard(); };
+      row.classList.remove("hidden");
+    }
+
     function renderEmpty() {
       $("banksCard").classList.add("hidden");
+      $("acctRow").classList.add("hidden");
       $("footNote").textContent = "";
       $("content").innerHTML =
         '<div class="card"><div class="empty">' +

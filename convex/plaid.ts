@@ -97,12 +97,17 @@ export const exchangePublicToken = action({
     const itemId = data.item_id as string;
     const accessToken = data.access_token as string;
 
+    const institutionName = args.institutionName || "My bank";
+
     await ctx.runMutation("plaid:storeItem", {
       syncKey: key,
       itemId,
       accessToken,
-      institutionName: args.institutionName || "My bank",
+      institutionName,
     });
+
+    // Fetch the accounts on this item so the app can offer an account picker.
+    await fetchAndStoreAccounts(ctx, key, itemId, accessToken, institutionName);
 
     // Pull transactions right away so the dashboard isn't empty.
     const result: { added: number } = await ctx.runAction(
@@ -157,11 +162,21 @@ export const syncTransactions = action({
       itemId: string;
       accessToken: string;
       cursor?: string;
+      institutionName: string;
     }> = await ctx.runQuery("plaid:itemsForSync", { syncKey: key });
 
     let totalAdded = 0;
 
     for (const item of items) {
+      // Keep account metadata fresh (names/masks for the account picker).
+      await fetchAndStoreAccounts(
+        ctx,
+        key,
+        item.itemId,
+        item.accessToken,
+        item.institutionName
+      );
+
       let cursor = item.cursor;
       let hasMore = true;
 
@@ -227,6 +242,71 @@ const txnValidator = v.object({
 });
 type Txn = Infer<typeof txnValidator>;
 
+// Fetch the accounts on an item from Plaid and store their metadata so the app
+// can show a real account picker and filter spending to one account.
+async function fetchAndStoreAccounts(
+  ctx: any,
+  syncKey: string,
+  itemId: string,
+  accessToken: string,
+  institutionName: string
+) {
+  try {
+    const data = await plaidRequest("/accounts/get", { access_token: accessToken });
+    const accounts = (data.accounts || []).map((a: any) => ({
+      accountId: a.account_id as string,
+      name: (a.name as string) || "Account",
+      officialName: (a.official_name as string) || undefined,
+      mask: (a.mask as string) || undefined,
+      type: (a.type as string) || undefined,
+      subtype: (a.subtype as string) || undefined,
+    }));
+    await ctx.runMutation("plaid:storeAccounts", {
+      syncKey,
+      itemId,
+      institutionName,
+      accounts,
+    });
+  } catch (e) {
+    console.error("Plaid /accounts/get failed:", e);
+  }
+}
+
+const accountValidator = v.object({
+  accountId: v.string(),
+  name: v.string(),
+  officialName: v.optional(v.string()),
+  mask: v.optional(v.string()),
+  type: v.optional(v.string()),
+  subtype: v.optional(v.string()),
+});
+
+// Internal — upsert account metadata for an item.
+export const storeAccounts = internalMutation({
+  args: {
+    syncKey: v.string(),
+    itemId: v.string(),
+    institutionName: v.string(),
+    accounts: v.array(accountValidator),
+  },
+  handler: async (ctx, args) => {
+    for (const a of args.accounts) {
+      const existing = await ctx.db
+        .query("plaidAccounts")
+        .withIndex("by_accountId", (q) => q.eq("accountId", a.accountId))
+        .first();
+      const row = {
+        syncKey: args.syncKey,
+        itemId: args.itemId,
+        institutionName: args.institutionName,
+        ...a,
+      };
+      if (existing) await ctx.db.patch(existing._id, row);
+      else await ctx.db.insert("plaidAccounts", row);
+    }
+  },
+});
+
 // Internal — read items (incl. access tokens & cursors) for a sync run.
 // internalQuery so access tokens are NEVER reachable from the browser client.
 export const itemsForSync = internalQuery({
@@ -241,6 +321,7 @@ export const itemsForSync = internalQuery({
       itemId: i.itemId,
       accessToken: i.accessToken,
       cursor: i.cursor,
+      institutionName: i.institutionName,
     }));
   },
 });
@@ -316,9 +397,32 @@ export const listItems = query({
   },
 });
 
+// Accounts across all linked banks (for the account picker). No secrets.
+export const listAccounts = query({
+  args: { syncKey: v.string() },
+  handler: async (ctx, args) => {
+    const key = normalizeKey(args.syncKey);
+    const accounts = await ctx.db
+      .query("plaidAccounts")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+      .collect();
+    return accounts.map((a) => ({
+      accountId: a.accountId,
+      name: a.name,
+      mask: a.mask,
+      subtype: a.subtype,
+      institutionName: a.institutionName,
+    }));
+  },
+});
+
 // The heart of the app: spending broken down by category, merchant and month.
 export const spendingSummary = query({
-  args: { syncKey: v.string(), days: v.optional(v.number()) },
+  args: {
+    syncKey: v.string(),
+    days: v.optional(v.number()),
+    accountId: v.optional(v.string()), // filter to a single account; omit for all
+  },
   handler: async (ctx, args) => {
     const key = normalizeKey(args.syncKey);
     const days = args.days ?? 30;
@@ -328,12 +432,16 @@ export const spendingSummary = query({
       .toISOString()
       .slice(0, 10);
 
-    const txns = await ctx.db
+    const all = await ctx.db
       .query("bankTransactions")
       .withIndex("by_syncKey_and_date", (q) =>
         q.eq("syncKey", key).gte("date", since)
       )
       .collect();
+
+    const txns = args.accountId
+      ? all.filter((t) => t.accountId === args.accountId)
+      : all;
 
     let totalSpent = 0;
     let totalIncome = 0;
@@ -350,6 +458,12 @@ export const spendingSummary = query({
       if (t.amount > 0) {
         // Ignore internal transfers so they don't masquerade as spending.
         if (t.category === "TRANSFER_OUT" || t.category === "TRANSFER_IN") {
+          continue;
+        }
+        // Ignore credit-card bill payments: the underlying purchases are already
+        // counted on the card itself, so counting the payment too would
+        // double-count that spending.
+        if (t.categoryDetailed === "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT") {
           continue;
         }
         totalSpent += t.amount;
@@ -387,14 +501,21 @@ export const spendingSummary = query({
 
 // Recent transactions feed.
 export const recentTransactions = query({
-  args: { syncKey: v.string(), limit: v.optional(v.number()) },
+  args: {
+    syncKey: v.string(),
+    limit: v.optional(v.number()),
+    accountId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const key = normalizeKey(args.syncKey);
     const limit = args.limit ?? 40;
-    const txns = await ctx.db
+    const all = await ctx.db
       .query("bankTransactions")
       .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
       .collect();
+    const txns = args.accountId
+      ? all.filter((t) => t.accountId === args.accountId)
+      : all;
     return txns
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, limit)
@@ -448,6 +569,14 @@ export const deleteItemData = internalMutation({
       .collect();
     for (const t of txns) {
       if (t.itemId === args.itemId) await ctx.db.delete(t._id);
+    }
+
+    const accounts = await ctx.db
+      .query("plaidAccounts")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", args.syncKey))
+      .collect();
+    for (const a of accounts) {
+      if (a.itemId === args.itemId) await ctx.db.delete(a._id);
     }
   },
 });

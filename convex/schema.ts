@@ -19,6 +19,23 @@ export default defineSchema({
     .index("by_syncKey", ["syncKey"])
     .index("by_itemId", ["itemId"]),
 
+  // One row per bank account within a linked item (checking, credit card, etc.).
+  // Populated from Plaid's /accounts/get so the app can show a real account
+  // picker ("Wells Fargo Checking ••1234") and filter spending to one account.
+  plaidAccounts: defineTable({
+    syncKey: v.string(),
+    itemId: v.string(),
+    accountId: v.string(),
+    name: v.string(),
+    officialName: v.optional(v.string()),
+    mask: v.optional(v.string()), // last 4 digits
+    type: v.optional(v.string()), // depository, credit, loan, ...
+    subtype: v.optional(v.string()), // checking, savings, credit card, ...
+    institutionName: v.string(),
+  })
+    .index("by_syncKey", ["syncKey"])
+    .index("by_accountId", ["accountId"]),
+
   // One row per Plaid transaction, denormalised for fast charting.
   bankTransactions: defineTable({
     syncKey: v.string(),
