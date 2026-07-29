@@ -1,12 +1,11 @@
 // Service worker for the Spending PWA.
-// Caches only the same-origin app shell so the icon opens instantly and works
-// offline for the UI. All bank/network calls (Convex, Plaid) are cross-origin
-// and pass straight through untouched.
+// Deliberately does NOT cache the app HTML/JS/config — those always come fresh
+// from the network so updates land immediately and the OAuth redirect flow is
+// never served a stale page. Only the icons/manifest are cached (for the
+// installed-app icon). All bank/network calls (Convex, Plaid) pass through.
 
-const CACHE = "spending-v1";
-const SHELL = [
-  "./index.html",
-  "./config.js",
+const CACHE = "spending-v3";
+const ASSETS = [
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
@@ -15,7 +14,7 @@ const SHELL = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())
+    caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())
   );
 });
 
@@ -23,9 +22,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-      )
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -33,18 +30,22 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
-
-  // Only handle same-origin GETs. Everything else (Convex, Plaid) goes to network.
   if (req.method !== "GET" || url.origin !== self.location.origin) return;
 
-  // Network-first for the app shell so updates land, cache as offline fallback.
-  event.respondWith(
-    fetch(req)
-      .then((res) => {
+  // Cache-first only for the static icons/manifest.
+  const isAsset = /\.(png|webmanifest)$/.test(url.pathname);
+  if (isAsset) {
+    event.respondWith(
+      caches.match(req).then((hit) => hit || fetch(req).then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy));
         return res;
-      })
-      .catch(() => caches.match(req).then((r) => r || caches.match("./index.html")))
-  );
+      }))
+    );
+    return;
+  }
+
+  // Everything else (index.html, config.js, sw.js) is ALWAYS network — never cached.
+  // Fall back to a cached index only if truly offline.
+  event.respondWith(fetch(req).catch(() => caches.match("./index.html")));
 });
