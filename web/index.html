@@ -425,7 +425,10 @@
     // page to the bank and back to this app with ?oauth_state_id=… . We store
     // the link token so we can re-open Plaid and finish the flow on return.
     const LINK_TOKEN_STORE = "plaid_link_token";
-    const REDIRECT_URI = location.origin + "/";
+    // The directory this app is served from (works at a domain root OR a
+    // subpath like /Spending-App/). This exact value must be registered in the
+    // Plaid dashboard under Allowed redirect URIs.
+    const REDIRECT_URI = location.origin + location.pathname.replace(/[^/]*$/, "");
 
     function clearOauthParam() {
       if (location.search.indexOf("oauth_state_id") !== -1) {
