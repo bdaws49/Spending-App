@@ -456,7 +456,10 @@
         onExit: (err) => {
           sessionStorage.removeItem(LINK_TOKEN_STORE);
           clearOauthParam();
-          if (err) toast("Link cancelled.");
+          if (err) {
+            const detail = err.error_code || err.error_message || err.display_message || "cancelled";
+            toast("Link exit: " + String(detail).slice(0, 90), 8000);
+          }
         },
       };
       if (receivedRedirectUri) config.receivedRedirectUri = receivedRedirectUri;
