@@ -1,5 +1,3 @@
 // ── Spending app configuration ───────────────────────────────────────────────
-// Paste YOUR Convex deployment URL here (printed by `npx convex dev`, e.g.
-// https://your-project-123.convex.cloud). This is what makes the app use its
-// OWN backend — it is not connected to anything else.
-window.SPENDING_CONVEX_URL = "PASTE_YOUR_CONVEX_URL_HERE";
+// This app's own Convex backend URL (printed by `npx convex dev`).
+window.SPENDING_CONVEX_URL = "https://little-iguana-116.convex.cloud";
