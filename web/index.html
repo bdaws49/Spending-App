@@ -420,18 +420,25 @@
       return "Couldn't reach your bank. Try again.";
     }
 
-    // ---- connect a bank via Plaid Link ----
-    async function connectBank() {
-      if (typeof Plaid === "undefined") { toast("Plaid Link didn't load. Check your connection."); return; }
-      let linkToken;
-      try {
-        const r = await convex.action("plaid:createLinkToken", { syncKey });
-        linkToken = r.linkToken;
-      } catch (e) { toast(friendlyError(e)); return; }
+    // ---- connect a bank via Plaid Link (with OAuth redirect support) ----
+    // Real banks (Wells Fargo, Chase, …) use OAuth: Plaid redirects the whole
+    // page to the bank and back to this app with ?oauth_state_id=… . We store
+    // the link token so we can re-open Plaid and finish the flow on return.
+    const LINK_TOKEN_STORE = "plaid_link_token";
+    const REDIRECT_URI = location.origin + "/";
 
-      const handler = Plaid.create({
+    function clearOauthParam() {
+      if (location.search.indexOf("oauth_state_id") !== -1) {
+        history.replaceState({}, "", location.pathname);
+      }
+    }
+
+    function openPlaid(linkToken, receivedRedirectUri) {
+      const config = {
         token: linkToken,
         onSuccess: async (public_token, metadata) => {
+          sessionStorage.removeItem(LINK_TOKEN_STORE);
+          clearOauthParam();
           toast("Linking…");
           try {
             await convex.action("plaid:exchangePublicToken", {
@@ -443,9 +450,36 @@
             await loadDashboard();
           } catch (e) { toast(friendlyError(e)); }
         },
-        onExit: (err) => { if (err) toast("Link cancelled."); },
-      });
-      handler.open();
+        onExit: (err) => {
+          sessionStorage.removeItem(LINK_TOKEN_STORE);
+          clearOauthParam();
+          if (err) toast("Link cancelled.");
+        },
+      };
+      if (receivedRedirectUri) config.receivedRedirectUri = receivedRedirectUri;
+      Plaid.create(config).open();
+    }
+
+    async function connectBank() {
+      if (typeof Plaid === "undefined") { toast("Plaid Link didn't load. Check your connection."); return; }
+      let linkToken;
+      try {
+        const r = await convex.action("plaid:createLinkToken", { syncKey, redirectUri: REDIRECT_URI });
+        linkToken = r.linkToken;
+      } catch (e) { toast(friendlyError(e)); return; }
+      sessionStorage.setItem(LINK_TOKEN_STORE, linkToken);
+      openPlaid(linkToken, null);
+    }
+
+    // If we've just returned from a bank's OAuth page, resume Plaid Link.
+    function maybeResumeOauth() {
+      if (location.search.indexOf("oauth_state_id") === -1) return;
+      const linkToken = sessionStorage.getItem(LINK_TOKEN_STORE);
+      if (linkToken && typeof Plaid !== "undefined") {
+        openPlaid(linkToken, location.href);
+      } else {
+        clearOauthParam();
+      }
     }
 
     // ---- render ----
@@ -961,6 +995,7 @@
       showMain();
       maybeLock();
       boot();
+      maybeResumeOauth();
     }
 
     // register service worker for installability + offline shell

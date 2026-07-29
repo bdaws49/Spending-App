@@ -61,18 +61,24 @@ async function plaidRequest(path: string, body: Record<string, unknown>) {
 // Step 1 — create a link token for the Plaid Link browser UI.
 // -----------------------------------------------------------------------------
 export const createLinkToken = action({
-  args: { syncKey: v.string() },
+  args: { syncKey: v.string(), redirectUri: v.optional(v.string()) },
   handler: async (_ctx, args) => {
     const key = normalizeKey(args.syncKey);
     if (!key) throw new Error("A sync key is required.");
 
-    const data = await plaidRequest("/link/token/create", {
+    const body: Record<string, unknown> = {
       user: { client_user_id: key },
       client_name: "Spending",
       products: ["transactions"],
       country_codes: ["US"],
       language: "en",
-    });
+    };
+    // Required for real banks that use OAuth: Plaid redirects the browser to the
+    // bank and back to this URL, which must also be registered in the Plaid
+    // dashboard under Team Settings → API → Allowed redirect URIs.
+    if (args.redirectUri) body.redirect_uri = args.redirectUri;
+
+    const data = await plaidRequest("/link/token/create", body);
     return { linkToken: data.link_token as string };
   },
 });
