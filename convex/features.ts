@@ -29,6 +29,15 @@ function monthStr(d: Date): string {
   return d.toISOString().slice(0, 7); // YYYY-MM
 }
 
+// Accounts the user has excluded from all totals/budgets.
+async function excludedAccountIds(ctx: any, key: string): Promise<Set<string>> {
+  const accounts = await ctx.db
+    .query("plaidAccounts")
+    .withIndex("by_syncKey", (q: any) => q.eq("syncKey", key))
+    .collect();
+  return new Set(accounts.filter((a: any) => a.excluded === true).map((a: any) => a.accountId));
+}
+
 // -----------------------------------------------------------------------------
 // Credit-card watch — how much you've put on credit cards this month.
 // -----------------------------------------------------------------------------
@@ -64,9 +73,11 @@ export const creditCardWatch = query({
       )
       .collect();
 
+    const excluded = await excludedAccountIds(ctx, key);
     let thisM = 0;
     let lastM = 0;
     for (const t of txns) {
+      if (excluded.has(t.accountId)) continue;
       if (!creditIds.has(t.accountId) || !isSpend(t)) continue;
       const m = t.date.slice(0, 7);
       if (m === thisMonth) thisM += t.amount;
@@ -99,12 +110,13 @@ export const subscriptions = query({
       )
       .collect();
 
+    const excluded = await excludedAccountIds(ctx, key);
     const groups: Record<
       string,
       { display: string; amounts: number[]; dates: string[] }
     > = {};
     for (const t of txns) {
-      if (!isSpend(t)) continue;
+      if (excluded.has(t.accountId) || !isSpend(t)) continue;
       const display = t.merchantName || t.name;
       const norm = display.toLowerCase().trim();
       if (!groups[norm]) groups[norm] = { display, amounts: [], dates: [] };
@@ -161,8 +173,10 @@ export const getBudgets = query({
     const overrides: Record<string, string> = {};
     for (const o of ovRows) overrides[o.transactionId] = o.label;
 
+    const excluded = await excludedAccountIds(ctx, key);
     const spentByCat: Record<string, number> = {};
     for (const t of txns) {
+      if (excluded.has(t.accountId)) continue;
       if (!isSpend(t) || t.date.slice(0, 7) !== month) continue;
       const catKey = overrides[t.transactionId] || t.category;
       spentByCat[catKey] = (spentByCat[catKey] || 0) + t.amount;
@@ -351,7 +365,11 @@ export const exportTransactions = query({
       .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
       .collect();
     const acctName: Record<string, string> = {};
-    for (const a of accounts) acctName[a.accountId] = a.name;
+    const excluded = new Set<string>();
+    for (const a of accounts) {
+      acctName[a.accountId] = a.name;
+      if (a.excluded === true) excluded.add(a.accountId);
+    }
 
     const tags = await ctx.db
       .query("transactionTags")
@@ -363,6 +381,7 @@ export const exportTransactions = query({
 
     const rows = txns
       .filter((t) => !t.pending)
+      .filter((t) => !excluded.has(t.accountId))
       .filter((t) => (args.businessOnly ? businessSet.has(t.transactionId) : true))
       .sort((a, b) => b.date.localeCompare(a.date))
       .map((t) => ({

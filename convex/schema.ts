@@ -32,6 +32,7 @@ export default defineSchema({
     type: v.optional(v.string()), // depository, credit, loan, ...
     subtype: v.optional(v.string()), // checking, savings, credit card, ...
     institutionName: v.string(),
+    excluded: v.optional(v.boolean()), // if true, left out of all totals/budgets
   })
     .index("by_syncKey", ["syncKey"])
     .index("by_accountId", ["accountId"]),

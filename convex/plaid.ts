@@ -3,6 +3,7 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
+  mutation,
   query,
 } from "./_generated/server";
 import { Infer, v } from "convex/values";
@@ -418,9 +419,32 @@ export const listAccounts = query({
       mask: a.mask,
       subtype: a.subtype,
       institutionName: a.institutionName,
+      excluded: a.excluded === true,
     }));
   },
 });
+
+// Include or exclude an account from all totals/budgets (fixes cross-account
+// "bleed-over" when a bank login has more than one account).
+export const setAccountExcluded = mutation({
+  args: { syncKey: v.string(), accountId: v.string(), excluded: v.boolean() },
+  handler: async (ctx, args) => {
+    const acct = await ctx.db
+      .query("plaidAccounts")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .first();
+    if (acct) await ctx.db.patch(acct._id, { excluded: args.excluded });
+  },
+});
+
+// Set of accountIds excluded from totals, for the current key.
+async function excludedAccountIds(ctx: any, key: string): Promise<Set<string>> {
+  const accounts = await ctx.db
+    .query("plaidAccounts")
+    .withIndex("by_syncKey", (q: any) => q.eq("syncKey", key))
+    .collect();
+  return new Set(accounts.filter((a: any) => a.excluded === true).map((a: any) => a.accountId));
+}
 
 // The heart of the app: spending broken down by category, merchant and month.
 export const spendingSummary = query({
@@ -445,9 +469,11 @@ export const spendingSummary = query({
       )
       .collect();
 
-    const txns = args.accountId
+    const excluded = await excludedAccountIds(ctx, key);
+    const txns = (args.accountId
       ? all.filter((t) => t.accountId === args.accountId)
-      : all;
+      : all
+    ).filter((t) => !excluded.has(t.accountId));
 
     // Manual category overrides (transactionId -> custom label).
     const ovRows = await ctx.db
@@ -528,9 +554,11 @@ export const recentTransactions = query({
       .query("bankTransactions")
       .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
       .collect();
-    const txns = args.accountId
+    const excluded = await excludedAccountIds(ctx, key);
+    const txns = (args.accountId
       ? all.filter((t) => t.accountId === args.accountId)
-      : all;
+      : all
+    ).filter((t) => !excluded.has(t.accountId));
 
     const tags = await ctx.db
       .query("transactionTags")

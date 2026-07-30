@@ -178,6 +178,13 @@
     .banks .b .sync { color: var(--muted); font-size: 0.78rem; }
     .banks .b button { background: none; border: 0; color: #e34948; font-size: 0.82rem; cursor: pointer; }
 
+    .acctlist label { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hair); font-size: 0.92rem; cursor: pointer; }
+    .acctlist label:last-child { border-bottom: 0; }
+    .acctlist input { width: 20px; height: 20px; flex: none; }
+    .acctlist .a-name { flex: 1; }
+    .acctlist .a-sub { color: var(--muted); font-size: 0.78rem; }
+    .acctlist label.off .a-name { color: var(--muted); text-decoration: line-through; }
+
     .note { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
     .toast {
       position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom) + 18px);
@@ -233,6 +240,7 @@
     .budget .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; font-size: 0.92rem; }
     .budget .top .cap { color: var(--muted); font-size: 0.82rem; }
     .budget .top .del { color: var(--muted); background: none; border: 0; cursor: pointer; font-size: 0.9rem; margin-left: 8px; }
+    .budget .bnote { color: var(--muted); font-size: 0.78rem; margin-top: 5px; }
     .budget .track { height: 8px; background: var(--surface-2); border-radius: 6px; overflow: hidden; }
     .budget .fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--brand), var(--brand-2)); }
     .budget .fill.over { background: #e34948; }
@@ -330,6 +338,12 @@
         <h2>Linked banks</h2>
         <div class="banks" id="banksList"></div>
         <button class="btn ghost" id="addBankBtn" style="margin-top:14px">+ Link another bank</button>
+      </div>
+
+      <div class="card hidden" id="accountsCard">
+        <h2>Accounts included</h2>
+        <p class="note" style="margin:-6px 0 12px">Uncheck an account to leave it out of every total, budget and chart.</p>
+        <div class="acctlist" id="acctList"></div>
       </div>
 
       <div class="card hidden" id="settingsCard">
@@ -581,6 +595,7 @@
         knownCategories = buildCategoryList(cats, summary);
 
         renderAccountSelector(accounts);
+        renderAccountsManager(accounts);
         renderBanks(items);
         $("settingsCard").classList.remove("hidden");
         updateLockButton();
@@ -604,36 +619,65 @@
       }
     }
 
-    // Show a picker only when there's more than one account to choose between.
+    const acctLabel = (a) => {
+      const base = a.name || a.subtype || "Account";
+      return a.institutionName + " · " + base + (a.mask ? " ••" + a.mask : "");
+    };
+
+    // Show a picker only when there's more than one INCLUDED account to view.
     function renderAccountSelector(accounts) {
       const row = $("acctRow");
       const sel = $("acctSelect");
-      if (!accounts || accounts.length < 2) {
+      const included = (accounts || []).filter((a) => !a.excluded);
+      if (included.length < 2) {
         row.classList.add("hidden");
         selectedAccount = null;
         return;
       }
-      // If the selected account disappeared (e.g. after unlink), reset to All.
-      if (selectedAccount && !accounts.find((a) => a.accountId === selectedAccount)) {
+      if (selectedAccount && !included.find((a) => a.accountId === selectedAccount)) {
         selectedAccount = null;
       }
-      const label = (a) => {
-        const base = a.name || a.subtype || "Account";
-        return a.institutionName + " · " + base + (a.mask ? " ••" + a.mask : "");
-      };
       sel.innerHTML =
         '<option value="">All accounts combined</option>' +
-        accounts
-          .map((a) => '<option value="' + a.accountId + '">' + escapeHtml(label(a)) + "</option>")
+        included
+          .map((a) => '<option value="' + a.accountId + '">' + escapeHtml(acctLabel(a)) + "</option>")
           .join("");
       sel.value = selectedAccount || "";
       sel.onchange = () => { selectedAccount = sel.value || null; loadDashboard(); };
       row.classList.remove("hidden");
     }
 
+    // Include/exclude accounts (fixes cross-account bleed-over). Only shown when
+    // a login exposes more than one account.
+    function renderAccountsManager(accounts) {
+      const card = $("accountsCard");
+      if (!accounts || accounts.length < 2) { card.classList.add("hidden"); return; }
+      $("acctList").innerHTML = accounts.map((a) => {
+        const on = !a.excluded;
+        return '<label class="' + (on ? "" : "off") + '">' +
+          '<input type="checkbox" data-acct="' + a.accountId + '"' + (on ? " checked" : "") + ">" +
+          '<span class="a-name">' + escapeHtml(a.name || a.subtype || "Account") +
+          (a.mask ? " ••" + a.mask : "") +
+          '<div class="a-sub">' + escapeHtml(a.institutionName) + "</div></span></label>";
+      }).join("");
+      $("acctList").querySelectorAll("input[data-acct]").forEach((cb) => {
+        cb.onchange = async () => {
+          try {
+            await convex.mutation("plaid:setAccountExcluded", {
+              syncKey, accountId: cb.dataset.acct, excluded: !cb.checked,
+            });
+            toast(cb.checked ? "Account included" : "Account excluded");
+            await loadDashboard();
+          } catch (e) { toast(friendlyError(e)); }
+        };
+      });
+      card.classList.remove("hidden");
+    }
+
     function renderEmpty() {
       $("banksCard").classList.add("hidden");
       $("settingsCard").classList.add("hidden");
+      $("accountsCard").classList.add("hidden");
       $("acctRow").classList.add("hidden");
       $("footNote").textContent = "";
       $("content").innerHTML =
@@ -806,12 +850,17 @@
         const over = b.spent > b.monthlyLimit;
         if (over) overCount++;
         const info = catInfo(b.category);
+        const remaining = Math.round((b.monthlyLimit - b.spent) * 100) / 100;
+        const remainStr = remaining >= 0
+          ? '<b style="color:var(--good)">' + fmt2(remaining) + " left</b>"
+          : '<b style="color:#e34948">' + fmt2(-remaining) + " over</b>";
         rows +=
           '<div class="budget' + (over ? " overbudget" : "") + '">' +
           '<div class="top"><span>' + info.emoji + " " + info.label +
-          '</span><span><span class="cap">' + fmt(b.spent) + " / " + fmt(b.monthlyLimit) +
-          '</span><button class="del" data-delcat="' + b.category + '" title="Remove budget">✕</button></span></div>' +
-          '<div class="track"><div class="fill' + (over ? " over" : "") + '" style="width:' + Math.max(3, pct) + '%"></div></div></div>';
+          '</span><span>' + remainStr +
+          '<button class="del" data-delcat="' + b.category + '" title="Remove budget">✕</button></span></div>' +
+          '<div class="track"><div class="fill' + (over ? " over" : "") + '" style="width:' + Math.max(3, pct) + '%"></div></div>' +
+          '<div class="bnote">' + fmt2(b.spent) + " spent of " + fmt(b.monthlyLimit) + "</div></div>";
       }
       const alert = overCount
         ? '<p class="note" style="color:#e34948;margin-bottom:10px">⚠️ Over budget in ' + overCount + " categor" + (overCount > 1 ? "ies" : "y") + " this month.</p>"
