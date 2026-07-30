@@ -449,6 +449,14 @@ export const spendingSummary = query({
       ? all.filter((t) => t.accountId === args.accountId)
       : all;
 
+    // Manual category overrides (transactionId -> custom label).
+    const ovRows = await ctx.db
+      .query("categoryOverrides")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+      .collect();
+    const overrides: Record<string, string> = {};
+    for (const o of ovRows) overrides[o.transactionId] = o.label;
+
     let totalSpent = 0;
     let totalIncome = 0;
     const byCategory: Record<string, number> = {};
@@ -473,7 +481,8 @@ export const spendingSummary = query({
           continue;
         }
         totalSpent += t.amount;
-        byCategory[t.category] = (byCategory[t.category] || 0) + t.amount;
+        const catKey = overrides[t.transactionId] || t.category;
+        byCategory[catKey] = (byCategory[catKey] || 0) + t.amount;
         const merchant = t.merchantName || t.name;
         byMerchant[merchant] = (byMerchant[merchant] || 0) + t.amount;
         const month = t.date.slice(0, 7); // YYYY-MM
@@ -531,6 +540,13 @@ export const recentTransactions = query({
       tags.filter((t) => t.isBusiness).map((t) => t.transactionId)
     );
 
+    const ovRows = await ctx.db
+      .query("categoryOverrides")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+      .collect();
+    const overrides: Record<string, string> = {};
+    for (const o of ovRows) overrides[o.transactionId] = o.label;
+
     return txns
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, limit)
@@ -539,7 +555,9 @@ export const recentTransactions = query({
         name: t.merchantName || t.name,
         amount: Math.round(t.amount * 100) / 100,
         date: t.date,
-        category: t.category,
+        category: t.category, // raw Plaid category
+        categoryKey: overrides[t.transactionId] || t.category, // effective
+        overridden: Boolean(overrides[t.transactionId]),
         pending: t.pending,
         isBusiness: businessSet.has(t.transactionId),
       }));

@@ -257,6 +257,28 @@
     .setrow button:active { background: var(--surface-2); }
     .bizfilter { display:flex; align-items:center; gap:8px; margin-bottom:12px; font-size:0.9rem; color:var(--ink-2); }
     .bizfilter input { width:16px; height:16px; }
+
+    /* category chip on transactions */
+    .catchip { border: 0; background: none; color: var(--muted); font: inherit; font-size: 0.8rem; cursor: pointer; padding: 0; }
+    .catchip:active { color: var(--brand); }
+
+    /* bottom sheet */
+    .sheet-wrap { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-end; }
+    .sheet-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+    .sheet { position: relative; width: 100%; max-width: 560px; margin: 0 auto; background: var(--surface);
+      border-radius: 20px 20px 0 0; padding: 16px 16px calc(env(safe-area-inset-bottom) + 20px);
+      max-height: 82vh; overflow-y: auto; box-shadow: 0 -10px 40px rgba(0,0,0,0.25); }
+    .sheet h3 { margin: 4px 0 14px; font-size: 1.05rem; }
+    .sheet .close { position: absolute; top: 12px; right: 14px; border: 0; background: none; font-size: 20px; color: var(--muted); cursor: pointer; }
+    .picks { display: flex; flex-wrap: wrap; gap: 8px; }
+    .picks .pick { border: 1px solid var(--hair); background: var(--surface-2); color: var(--ink);
+      border-radius: 999px; padding: 9px 13px; font-size: 0.9rem; cursor: pointer; }
+    .picks .pick.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+    .newcat { display: flex; gap: 8px; margin-top: 14px; }
+    .newcat input { flex: 1; min-width: 0; padding: 11px; border-radius: 12px; border: 1px solid var(--hair); background: var(--surface-2); color: var(--ink); font-size: 0.95rem; }
+    .newcat button { border: 0; background: var(--brand); color: #fff; border-radius: 12px; padding: 0 16px; font-weight: 600; cursor: pointer; }
+    .sheet textarea { width: 100%; border-radius: 12px; border: 1px solid var(--hair); background: var(--surface-2); color: var(--ink); font-size: 0.95rem; padding: 12px; font-family: inherit; }
+    .sheet code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -328,6 +350,16 @@
 
   <div class="toast" id="toast"></div>
 
+  <!-- Bottom sheet (category picker / budget paste) -->
+  <div class="sheet-wrap hidden" id="sheetWrap">
+    <div class="sheet-backdrop" id="sheetBackdrop"></div>
+    <div class="sheet">
+      <button class="close" id="sheetClose" aria-label="Close">✕</button>
+      <h3 id="sheetTitle"></h3>
+      <div id="sheetBody"></div>
+    </div>
+  </div>
+
   <script type="module">
     import { ConvexHttpClient } from "https://esm.sh/convex@1.29.1/browser";
 
@@ -354,7 +386,30 @@
       INCOME:                    { label: "Income",         emoji: "💰", slot: "sother" },
       OTHER:                     { label: "Other",          emoji: "📦", slot: "sother" },
     };
-    const catInfo = (key) => CATS[key] || { label: titleCase(key), emoji: "📦", slot: "sother" };
+    // Guess a nice emoji for a custom category from keywords in its name.
+    const EMOJI_HINTS = [
+      [/groc|kroger|market|food/i, "🛒"], [/gas|fuel|shell|exxon/i, "⛽"],
+      [/eat|restaur|dining|dine/i, "🍽️"], [/tithe|church|mission|give|charit/i, "⛪"],
+      [/insur|aetna|geico|allstate/i, "🛡️"], [/health|medical|doctor|aetna/i, "⚕️"],
+      [/travel|flight|hotel|air/i, "✈️"], [/loan|mortgage|debt/i, "🏦"],
+      [/phone|att|at&t|verizon|mobile|cell/i, "📱"], [/rent|util|electric|water|bill/i, "🏠"],
+      [/car|auto|vehicle/i, "🚗"], [/apple|subscription|netflix|spotify/i, "🔁"],
+      [/gym|fitness/i, "🏋️"], [/pet|dog|cat/i, "🐾"], [/kid|child|school|tuition/i, "🎒"],
+      [/coffee|starbucks/i, "☕"], [/save|acorn|invest/i, "💰"], [/ai|software|tech/i, "🤖"],
+      [/group|family/i, "👨‍👩‍👧"], [/paypal/i, "🅿️"],
+    ];
+    function guessEmoji(name) {
+      for (const [re, e] of EMOJI_HINTS) if (re.test(name)) return e;
+      return "🏷️";
+    }
+    // Deterministic color slot (s1..s8) for a custom category name.
+    function hashSlot(s) {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+      return "s" + ((h % 8) + 1);
+    }
+    const catInfo = (key) =>
+      CATS[key] || { label: titleCase(key), emoji: guessEmoji(String(key)), slot: hashSlot(String(key)) };
     function titleCase(s) {
       return String(s || "Other").toLowerCase().replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
     }
@@ -366,6 +421,21 @@
     let currency = "USD";
     let selectedAccount = null; // null = all accounts combined
     let businessOnly = false;   // transaction list filter
+    let knownCategories = [];   // category keys available in the pickers
+
+    // Common Plaid categories always offered in the picker, plus the user's own.
+    const BASE_CATS = [
+      "FOOD_AND_DRINK", "GENERAL_MERCHANDISE", "TRANSPORTATION", "TRAVEL",
+      "ENTERTAINMENT", "RENT_AND_UTILITIES", "GENERAL_SERVICES", "MEDICAL",
+      "PERSONAL_CARE", "LOAN_PAYMENTS",
+    ];
+    function buildCategoryList(custom, summary) {
+      const set = new Set(BASE_CATS);
+      (custom || []).forEach((c) => set.add(c));
+      (summary.categories || []).forEach((c) => set.add(c.label));
+      return Array.from(set).sort((a, b) =>
+        catInfo(a).label.localeCompare(catInfo(b).label));
+    }
 
     const $ = (id) => document.getElementById(id);
     const fmt = (n) =>
@@ -492,7 +562,7 @@
     async function loadDashboard() {
       const content = $("content");
       try {
-        const [summary, items, txns, accounts, watch, subs, budgets] = await Promise.all([
+        const [summary, items, txns, accounts, watch, subs, budgets, cats] = await Promise.all([
           convex.query("plaid:spendingSummary", { syncKey, days, accountId: selectedAccount || undefined }),
           convex.query("plaid:listItems", { syncKey }),
           convex.query("plaid:recentTransactions", { syncKey, limit: 40, accountId: selectedAccount || undefined }),
@@ -500,10 +570,15 @@
           convex.query("features:creditCardWatch", { syncKey }),
           convex.query("features:subscriptions", { syncKey }),
           convex.query("features:getBudgets", { syncKey }),
+          convex.query("features:listCategories", { syncKey }),
         ]);
         currency = summary.currency || "USD";
 
         if (!items.length) { renderEmpty(); return; }
+
+        // All category names available for the pickers: custom ones + whatever
+        // Plaid categories currently appear in the summary (as friendly labels).
+        knownCategories = buildCategoryList(cats, summary);
 
         renderAccountSelector(accounts);
         renderBanks(items);
@@ -650,14 +725,17 @@
       if (!txns.length) return "";
       const shown = businessOnly ? txns.filter((t) => t.isBusiness) : txns;
       const rows = shown.map((t) => {
-        const info = catInfo(t.category);
+        const key = t.categoryKey || t.category;
+        const info = catInfo(key);
         const isIn = t.amount < 0;
         const amt = (isIn ? "+" : "") + fmt2(Math.abs(t.amount));
         const d = new Date(t.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
         return (
           '<div class="txn"><div class="emoji">' + info.emoji + "</div>" +
           '<div class="meta"><div class="n">' + escapeHtml(t.name) + (t.pending ? " · pending" : "") + "</div>" +
-          '<div class="d">' + d + " · " + info.label + "</div></div>" +
+          '<div class="d">' + d + " · " +
+          '<button class="catchip" data-cat-txn="' + t.transactionId + '" data-cat-key="' + escapeHtml(key) + '">' +
+          info.label + (t.overridden ? "" : "") + " ✎</button></div></div>" +
           '<button class="biz' + (t.isBusiness ? " on" : "") + '" data-txnid="' + t.transactionId +
           '" data-biz="' + (t.isBusiness ? "1" : "0") + '" title="Mark as business expense">💼</button>' +
           '<div class="amt' + (isIn ? " in" : "") + '">' + amt + "</div></div>"
@@ -666,7 +744,9 @@
       const filter =
         '<label class="bizfilter"><input type="checkbox" id="bizFilter"' +
         (businessOnly ? " checked" : "") + "> Show business expenses only 💼</label>";
-      return '<div class="card"><h2>Recent transactions</h2>' + filter + rows + "</div>";
+      return '<div class="card"><h2>Recent transactions</h2>' +
+        '<p class="note" style="margin:-4px 0 12px">Tap a category (✎) to change it — e.g. split Kroger into Groceries vs Gas.</p>' +
+        filter + rows + "</div>";
     }
 
     function renderBanks(items) {
@@ -733,22 +813,19 @@
           '</span><button class="del" data-delcat="' + b.category + '" title="Remove budget">✕</button></span></div>' +
           '<div class="track"><div class="fill' + (over ? " over" : "") + '" style="width:' + Math.max(3, pct) + '%"></div></div></div>';
       }
-      // category options for adding a budget (only ones not already budgeted)
-      const budgeted = new Set(budgets.map((b) => b.category));
-      const opts = (summary.categories || [])
-        .filter((c) => !budgeted.has(c.label))
-        .map((c) => {
-          const info = catInfo(c.label);
-          return '<option value="' + c.label + '">' + info.emoji + " " + info.label + "</option>";
-        }).join("");
       const alert = overCount
         ? '<p class="note" style="color:#e34948;margin-bottom:10px">⚠️ Over budget in ' + overCount + " categor" + (overCount > 1 ? "ies" : "y") + " this month.</p>"
         : "";
-      const addForm = opts
-        ? '<div class="budget-add"><select id="budCat"><option value="" disabled selected>Add a budget…</option>' + opts +
-          '</select><input id="budAmt" type="number" inputmode="numeric" placeholder="$/mo" min="1"><button id="budAdd">Set</button></div>'
-        : "";
-      if (!rows && !addForm) return "";
+      // Free-text add (any category name), with a datalist of known categories.
+      const dataOpts = knownCategories
+        .map((k) => '<option value="' + escapeHtml(catInfo(k).label) + '">').join("");
+      const addForm =
+        '<div class="budget-add">' +
+        '<input id="budCat" list="catList" placeholder="Category (e.g. Tithe)" autocapitalize="words">' +
+        '<datalist id="catList">' + dataOpts + "</datalist>" +
+        '<input id="budAmt" type="number" inputmode="decimal" placeholder="$/mo" min="1">' +
+        '<button id="budAdd">Set</button></div>' +
+        '<button class="btn ghost" id="budPaste" style="margin-top:10px">📋 Paste my whole budget list</button>';
       return '<div class="card"><h2>Monthly budgets</h2>' + alert + rows + addForm + "</div>";
     }
 
@@ -790,7 +867,93 @@
           } catch (e) { toast(friendlyError(e)); }
         };
       });
+
+      const budPaste = $("budPaste");
+      if (budPaste) budPaste.onclick = openBudgetPaste;
+
+      // Tap a transaction's category chip to re-categorize it.
+      $("content").querySelectorAll(".catchip").forEach((btn) => {
+        btn.onclick = () => openCategoryPicker(btn.dataset.catTxn, btn.dataset.catKey);
+      });
     }
+
+    // ---- category picker (bottom sheet) ----
+    function openCategoryPicker(txnId, currentKey) {
+      const buttons = knownCategories.map((k) => {
+        const info = catInfo(k);
+        const on = k === currentKey ? " on" : "";
+        return '<button class="pick' + on + '" data-key="' + escapeHtml(k) + '">' +
+          info.emoji + " " + escapeHtml(info.label) + "</button>";
+      }).join("");
+      openSheet(
+        "Categorize this transaction",
+        '<div class="picks">' + buttons + "</div>" +
+        '<div class="newcat"><input id="newCatInput" placeholder="Or type a new category…" autocapitalize="words">' +
+        '<button id="newCatBtn">Add</button></div>' +
+        '<button class="btn ghost" id="resetCat" style="margin-top:10px">↩︎ Reset to bank default</button>'
+      );
+      const apply = async (label) => {
+        closeSheet();
+        try {
+          await convex.mutation("features:setCategory", { syncKey, transactionId: txnId, label });
+          toast(label ? "Moved to " + catInfo(label).label : "Reset to bank category");
+          await loadDashboard();
+        } catch (e) { toast(friendlyError(e)); }
+      };
+      $("sheetBody").querySelectorAll(".pick").forEach((b) => (b.onclick = () => apply(b.dataset.key)));
+      $("newCatBtn").onclick = () => {
+        const v = $("newCatInput").value.trim();
+        if (v) apply(v);
+      };
+      $("resetCat").onclick = () => apply("");
+    }
+
+    // ---- paste-in budgets ----
+    function openBudgetPaste() {
+      openSheet(
+        "Paste your budget list",
+        '<p class="note" style="margin:0 0 8px">One per line: a category and an amount. Extra words like "wf" are ignored.<br>Example:<br><code>Groceries 193<br>Tithe 150<br>Gas 200</code></p>' +
+        '<textarea id="pasteArea" rows="10" placeholder="Groceries 193&#10;Tithe 150&#10;Gas 200"></textarea>' +
+        '<button class="btn" id="pasteSave" style="margin-top:10px">Save budgets</button>'
+      );
+      $("pasteSave").onclick = async () => {
+        const parsed = parseBudgetText($("pasteArea").value);
+        if (!parsed.length) { toast("Couldn't find any category + amount lines."); return; }
+        closeSheet();
+        try {
+          await convex.mutation("features:bulkSetBudgets", { syncKey, budgets: parsed });
+          toast("Saved " + parsed.length + " budgets");
+          await loadDashboard();
+        } catch (e) { toast(friendlyError(e)); }
+      };
+    }
+    // Parse lines like "Groceries wf $193.00" -> {category:"Groceries", monthlyLimit:193}
+    function parseBudgetText(text) {
+      const out = [];
+      for (const raw of String(text).split(/\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        const m = line.match(/([0-9][0-9,]*\.?[0-9]*)\s*$/); // trailing number
+        if (!m) continue;
+        const amount = Number(m[1].replace(/,/g, ""));
+        if (!(amount > 0)) continue;
+        let name = line.slice(0, m.index).replace(/[$]/g, "").trim();
+        name = name.replace(/\b(wf|chase|paypal|visa)\b\s*$/i, "").trim(); // drop trailing bank codes
+        name = name.replace(/\s+/g, " ");
+        if (name) out.push({ category: name, monthlyLimit: amount });
+      }
+      return out;
+    }
+
+    // ---- generic bottom sheet ----
+    function openSheet(title, bodyHtml) {
+      $("sheetTitle").textContent = title;
+      $("sheetBody").innerHTML = bodyHtml;
+      $("sheetWrap").classList.remove("hidden");
+    }
+    function closeSheet() { $("sheetWrap").classList.add("hidden"); }
+    $("sheetClose").addEventListener("click", closeSheet);
+    $("sheetBackdrop").addEventListener("click", closeSheet);
 
     // ---- CSV export ----
     function toCsv(rows) {

@@ -154,10 +154,18 @@ export const getBudgets = query({
       )
       .collect();
 
+    const ovRows = await ctx.db
+      .query("categoryOverrides")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+      .collect();
+    const overrides: Record<string, string> = {};
+    for (const o of ovRows) overrides[o.transactionId] = o.label;
+
     const spentByCat: Record<string, number> = {};
     for (const t of txns) {
       if (!isSpend(t) || t.date.slice(0, 7) !== month) continue;
-      spentByCat[t.category] = (spentByCat[t.category] || 0) + t.amount;
+      const catKey = overrides[t.transactionId] || t.category;
+      spentByCat[catKey] = (spentByCat[catKey] || 0) + t.amount;
     }
 
     const budgets = await ctx.db
@@ -207,6 +215,82 @@ export const deleteBudget = mutation({
       .collect();
     const match = existing.find((b) => b.category === args.category);
     if (match) await ctx.db.delete(match._id);
+  },
+});
+
+// Set many budgets at once (paste-in import). Skips blank / non-positive rows.
+export const bulkSetBudgets = mutation({
+  args: {
+    syncKey: v.string(),
+    budgets: v.array(v.object({ category: v.string(), monthlyLimit: v.number() })),
+  },
+  handler: async (ctx, args) => {
+    const key = normalizeKey(args.syncKey);
+    const existing = await ctx.db
+      .query("budgets")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+      .collect();
+    for (const b of args.budgets) {
+      const cat = b.category.trim();
+      if (!cat || !(b.monthlyLimit > 0)) continue;
+      const match = existing.find((e) => e.category === cat);
+      if (match) {
+        await ctx.db.patch(match._id, { monthlyLimit: b.monthlyLimit });
+      } else {
+        await ctx.db.insert("budgets", { syncKey: key, category: cat, monthlyLimit: b.monthlyLimit });
+      }
+    }
+  },
+});
+
+// -----------------------------------------------------------------------------
+// Manual category assignment. Empty label removes the override.
+// -----------------------------------------------------------------------------
+export const setCategory = mutation({
+  args: { syncKey: v.string(), transactionId: v.string(), label: v.string() },
+  handler: async (ctx, args) => {
+    const key = normalizeKey(args.syncKey);
+    const label = args.label.trim();
+    const existing = await ctx.db
+      .query("categoryOverrides")
+      .withIndex("by_transactionId", (q) =>
+        q.eq("transactionId", args.transactionId)
+      )
+      .first();
+    if (!label) {
+      if (existing) await ctx.db.delete(existing._id);
+      return;
+    }
+    if (existing) {
+      await ctx.db.patch(existing._id, { label });
+    } else {
+      await ctx.db.insert("categoryOverrides", {
+        syncKey: key,
+        transactionId: args.transactionId,
+        label,
+      });
+    }
+  },
+});
+
+// The set of custom category labels the user has created (from overrides and
+// budgets), so the picker can offer them for reuse.
+export const listCategories = query({
+  args: { syncKey: v.string() },
+  handler: async (ctx, args) => {
+    const key = normalizeKey(args.syncKey);
+    const overrides = await ctx.db
+      .query("categoryOverrides")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+      .collect();
+    const budgets = await ctx.db
+      .query("budgets")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+      .collect();
+    const set = new Set<string>();
+    for (const o of overrides) set.add(o.label);
+    for (const b of budgets) set.add(b.category);
+    return Array.from(set).sort();
   },
 });
 

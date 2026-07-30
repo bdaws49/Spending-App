@@ -70,4 +70,14 @@ export default defineSchema({
   })
     .index("by_syncKey", ["syncKey"])
     .index("by_transactionId", ["transactionId"]),
+
+  // Per-transaction manual category override (e.g. tag one Kroger charge as
+  // "Gas" and another as "Groceries"). label is a free-form category name.
+  categoryOverrides: defineTable({
+    syncKey: v.string(),
+    transactionId: v.string(),
+    label: v.string(),
+  })
+    .index("by_syncKey", ["syncKey"])
+    .index("by_transactionId", ["transactionId"]),
 });
