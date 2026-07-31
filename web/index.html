@@ -285,6 +285,12 @@
     .newcat { display: flex; gap: 8px; margin-top: 14px; }
     .newcat input { flex: 1; min-width: 0; padding: 11px; border-radius: 12px; border: 1px solid var(--hair); background: var(--surface-2); color: var(--ink); font-size: 0.95rem; }
     .newcat button { border: 0; background: var(--brand); color: #fff; border-radius: 12px; padding: 0 16px; font-weight: 600; cursor: pointer; }
+    .rulechk { display: flex; align-items: center; gap: 9px; margin-top: 14px; font-size: 0.9rem; color: var(--ink-2); line-height: 1.3; }
+    .rulechk input { width: 18px; height: 18px; flex: none; }
+    .rules .r { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--hair); font-size: 0.9rem; }
+    .rules .r:last-child { border-bottom: 0; }
+    .rules .r .m { color: var(--ink-2); }
+    .rules .r button { background: none; border: 0; color: #e34948; cursor: pointer; font-size: 0.85rem; }
     .sheet textarea { width: 100%; border-radius: 12px; border: 1px solid var(--hair); background: var(--surface-2); color: var(--ink); font-size: 0.95rem; padding: 12px; font-family: inherit; }
     .sheet code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
   </style>
@@ -344,6 +350,12 @@
         <h2>Accounts included</h2>
         <p class="note" style="margin:-6px 0 12px">Uncheck an account to leave it out of every total, budget and chart.</p>
         <div class="acctlist" id="acctList"></div>
+      </div>
+
+      <div class="card hidden" id="rulesCard">
+        <h2>Auto-categorize rules</h2>
+        <p class="note" style="margin:-6px 0 12px">When a charge's name contains this text, it's filed under this category automatically.</p>
+        <div class="rules" id="rulesList"></div>
       </div>
 
       <div class="card hidden" id="settingsCard">
@@ -576,7 +588,7 @@
     async function loadDashboard() {
       const content = $("content");
       try {
-        const [summary, items, txns, accounts, watch, subs, budgets, cats] = await Promise.all([
+        const [summary, items, txns, accounts, watch, subs, budgets, cats, rules] = await Promise.all([
           convex.query("plaid:spendingSummary", { syncKey, days, accountId: selectedAccount || undefined }),
           convex.query("plaid:listItems", { syncKey }),
           convex.query("plaid:recentTransactions", { syncKey, limit: 40, accountId: selectedAccount || undefined }),
@@ -585,6 +597,7 @@
           convex.query("features:subscriptions", { syncKey }),
           convex.query("features:getBudgets", { syncKey }),
           convex.query("features:listCategories", { syncKey }),
+          convex.query("features:listRules", { syncKey }),
         ]);
         currency = summary.currency || "USD";
 
@@ -596,6 +609,7 @@
 
         renderAccountSelector(accounts);
         renderAccountsManager(accounts);
+        renderRulesManager(rules);
         renderBanks(items);
         $("settingsCard").classList.remove("hidden");
         updateLockButton();
@@ -674,10 +688,33 @@
       card.classList.remove("hidden");
     }
 
+    // List of active auto-categorize rules, each removable. Hidden when none.
+    function renderRulesManager(rules) {
+      const card = $("rulesCard");
+      if (!rules || !rules.length) { card.classList.add("hidden"); return; }
+      $("rulesList").innerHTML = rules.map((r) => {
+        const info = catInfo(r.label);
+        return '<div class="r"><span>Contains <b>"' + escapeHtml(r.match) + '"</b> ' +
+          '<span class="m">→ ' + info.emoji + " " + escapeHtml(info.label) + "</span></span>" +
+          '<button data-delrule="' + r.id + '">Remove</button></div>';
+      }).join("");
+      $("rulesList").querySelectorAll("[data-delrule]").forEach((btn) => {
+        btn.onclick = async () => {
+          try {
+            await convex.mutation("features:deleteRule", { syncKey, id: btn.dataset.delrule });
+            toast("Rule removed");
+            await loadDashboard();
+          } catch (e) { toast(friendlyError(e)); }
+        };
+      });
+      card.classList.remove("hidden");
+    }
+
     function renderEmpty() {
       $("banksCard").classList.add("hidden");
       $("settingsCard").classList.add("hidden");
       $("accountsCard").classList.add("hidden");
+      $("rulesCard").classList.add("hidden");
       $("acctRow").classList.add("hidden");
       $("footNote").textContent = "";
       $("content").innerHTML =
@@ -778,8 +815,9 @@
           '<div class="txn"><div class="emoji">' + info.emoji + "</div>" +
           '<div class="meta"><div class="n">' + escapeHtml(t.name) + (t.pending ? " · pending" : "") + "</div>" +
           '<div class="d">' + d + " · " +
-          '<button class="catchip" data-cat-txn="' + t.transactionId + '" data-cat-key="' + escapeHtml(key) + '">' +
-          info.label + (t.overridden ? "" : "") + " ✎</button></div></div>" +
+          '<button class="catchip" data-cat-txn="' + t.transactionId + '" data-cat-key="' + escapeHtml(key) +
+          '" data-cat-name="' + escapeHtml(t.name) + '">' +
+          info.label + " ✎</button></div></div>" +
           '<button class="biz' + (t.isBusiness ? " on" : "") + '" data-txnid="' + t.transactionId +
           '" data-biz="' + (t.isBusiness ? "1" : "0") + '" title="Mark as business expense">💼</button>' +
           '<div class="amt' + (isIn ? " in" : "") + '">' + amt + "</div></div>"
@@ -922,30 +960,42 @@
 
       // Tap a transaction's category chip to re-categorize it.
       $("content").querySelectorAll(".catchip").forEach((btn) => {
-        btn.onclick = () => openCategoryPicker(btn.dataset.catTxn, btn.dataset.catKey);
+        btn.onclick = () => openCategoryPicker(btn.dataset.catTxn, btn.dataset.catKey, btn.dataset.catName);
       });
     }
 
     // ---- category picker (bottom sheet) ----
-    function openCategoryPicker(txnId, currentKey) {
+    function openCategoryPicker(txnId, currentKey, merchant) {
       const buttons = knownCategories.map((k) => {
         const info = catInfo(k);
         const on = k === currentKey ? " on" : "";
         return '<button class="pick' + on + '" data-key="' + escapeHtml(k) + '">' +
           info.emoji + " " + escapeHtml(info.label) + "</button>";
       }).join("");
+      const m = (merchant || "").trim();
+      const ruleRow = m
+        ? '<label class="rulechk"><input type="checkbox" id="applyAll"> Also apply to <b>all "' +
+          escapeHtml(m) + '"</b> charges (past &amp; future)</label>'
+        : "";
       openSheet(
         "Categorize this transaction",
         '<div class="picks">' + buttons + "</div>" +
         '<div class="newcat"><input id="newCatInput" placeholder="Or type a new category…" autocapitalize="words">' +
         '<button id="newCatBtn">Add</button></div>' +
+        ruleRow +
         '<button class="btn ghost" id="resetCat" style="margin-top:10px">↩︎ Reset to bank default</button>'
       );
       const apply = async (label) => {
+        const applyAll = $("applyAll") && $("applyAll").checked;
         closeSheet();
         try {
-          await convex.mutation("features:setCategory", { syncKey, transactionId: txnId, label });
-          toast(label ? "Moved to " + catInfo(label).label : "Reset to bank category");
+          await convex.mutation("features:setCategory", {
+            syncKey, transactionId: txnId, label,
+            ruleMatch: label && applyAll ? m : undefined,
+          });
+          toast(!label ? "Reset to bank category"
+            : applyAll ? 'All "' + m + '" → ' + catInfo(label).label
+            : "Moved to " + catInfo(label).label);
           await loadDashboard();
         } catch (e) { toast(friendlyError(e)); }
       };

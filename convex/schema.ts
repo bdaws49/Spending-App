@@ -81,4 +81,13 @@ export default defineSchema({
   })
     .index("by_syncKey", ["syncKey"])
     .index("by_transactionId", ["transactionId"]),
+
+  // Auto-categorization rule: any transaction whose merchant/name contains
+  // `match` (case-insensitive) is categorized as `label` unless it has a manual
+  // per-transaction override. Powers "always categorize Kroger as Groceries".
+  categoryRules: defineTable({
+    syncKey: v.string(),
+    match: v.string(), // lower-cased substring to look for
+    label: v.string(),
+  }).index("by_syncKey", ["syncKey"]),
 });

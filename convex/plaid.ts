@@ -28,6 +28,27 @@ function normalizeKey(key: string): string {
   return key.trim().toLowerCase();
 }
 
+// Resolve a transaction's effective category: manual per-transaction override
+// wins, then a matching auto-rule (merchant substring), then Plaid's category.
+function resolveCat(
+  t: { transactionId: string; merchantName?: string; name: string; category: string },
+  overrides: Record<string, string>,
+  rules: Array<{ match: string; label: string }>
+): string {
+  const ov = overrides[t.transactionId];
+  if (ov) return ov;
+  const hay = (t.merchantName || t.name || "").toLowerCase();
+  for (const r of rules) if (r.match && hay.indexOf(r.match) !== -1) return r.label;
+  return t.category;
+}
+async function loadRules(ctx: any, key: string) {
+  const rules = await ctx.db
+    .query("categoryRules")
+    .withIndex("by_syncKey", (q: any) => q.eq("syncKey", key))
+    .collect();
+  return rules.map((r: any) => ({ match: (r.match || "").toLowerCase(), label: r.label }));
+}
+
 function plaidBaseUrl(): string {
   const env = (process.env.PLAID_ENV || "sandbox").toLowerCase();
   if (env === "production") return "https://production.plaid.com";
@@ -475,13 +496,14 @@ export const spendingSummary = query({
       : all
     ).filter((t) => !excluded.has(t.accountId));
 
-    // Manual category overrides (transactionId -> custom label).
+    // Manual category overrides (transactionId -> custom label) + auto-rules.
     const ovRows = await ctx.db
       .query("categoryOverrides")
       .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
       .collect();
     const overrides: Record<string, string> = {};
     for (const o of ovRows) overrides[o.transactionId] = o.label;
+    const rules = await loadRules(ctx, key);
 
     let totalSpent = 0;
     let totalIncome = 0;
@@ -507,7 +529,7 @@ export const spendingSummary = query({
           continue;
         }
         totalSpent += t.amount;
-        const catKey = overrides[t.transactionId] || t.category;
+        const catKey = resolveCat(t, overrides, rules);
         byCategory[catKey] = (byCategory[catKey] || 0) + t.amount;
         const merchant = t.merchantName || t.name;
         byMerchant[merchant] = (byMerchant[merchant] || 0) + t.amount;
@@ -574,6 +596,7 @@ export const recentTransactions = query({
       .collect();
     const overrides: Record<string, string> = {};
     for (const o of ovRows) overrides[o.transactionId] = o.label;
+    const rules = await loadRules(ctx, key);
 
     return txns
       .sort((a, b) => b.date.localeCompare(a.date))
@@ -584,7 +607,7 @@ export const recentTransactions = query({
         amount: Math.round(t.amount * 100) / 100,
         date: t.date,
         category: t.category, // raw Plaid category
-        categoryKey: overrides[t.transactionId] || t.category, // effective
+        categoryKey: resolveCat(t, overrides, rules), // effective
         overridden: Boolean(overrides[t.transactionId]),
         pending: t.pending,
         isBusiness: businessSet.has(t.transactionId),
