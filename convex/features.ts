@@ -172,13 +172,23 @@ export const getBudgets = query({
       .collect();
     const overrides: Record<string, string> = {};
     for (const o of ovRows) overrides[o.transactionId] = o.label;
+    const ruleRows = await ctx.db
+      .query("categoryRules")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+      .collect();
+    const rules = ruleRows.map((r) => ({ match: (r.match || "").toLowerCase(), label: r.label }));
 
     const excluded = await excludedAccountIds(ctx, key);
     const spentByCat: Record<string, number> = {};
     for (const t of txns) {
       if (excluded.has(t.accountId)) continue;
       if (!isSpend(t) || t.date.slice(0, 7) !== month) continue;
-      const catKey = overrides[t.transactionId] || t.category;
+      let catKey = overrides[t.transactionId];
+      if (!catKey) {
+        const hay = (t.merchantName || t.name || "").toLowerCase();
+        const rule = rules.find((r) => r.match && hay.indexOf(r.match) !== -1);
+        catKey = rule ? rule.label : t.category;
+      }
       spentByCat[catKey] = (spentByCat[catKey] || 0) + t.amount;
     }
 
@@ -261,7 +271,14 @@ export const bulkSetBudgets = mutation({
 // Manual category assignment. Empty label removes the override.
 // -----------------------------------------------------------------------------
 export const setCategory = mutation({
-  args: { syncKey: v.string(), transactionId: v.string(), label: v.string() },
+  args: {
+    syncKey: v.string(),
+    transactionId: v.string(),
+    label: v.string(),
+    // If provided, also create an auto-rule so every transaction whose
+    // merchant/name contains this text gets the same category.
+    ruleMatch: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const key = normalizeKey(args.syncKey);
     const label = args.label.trim();
@@ -283,6 +300,46 @@ export const setCategory = mutation({
         transactionId: args.transactionId,
         label,
       });
+    }
+
+    // Optionally make it a rule for this merchant.
+    const match = (args.ruleMatch || "").trim().toLowerCase();
+    if (match) {
+      const rules = await ctx.db
+        .query("categoryRules")
+        .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+        .collect();
+      const dupe = rules.find((r) => r.match.toLowerCase() === match);
+      if (dupe) {
+        await ctx.db.patch(dupe._id, { label });
+      } else {
+        await ctx.db.insert("categoryRules", { syncKey: key, match, label });
+      }
+    }
+  },
+});
+
+// List auto-rules for management.
+export const listRules = query({
+  args: { syncKey: v.string() },
+  handler: async (ctx, args) => {
+    const key = normalizeKey(args.syncKey);
+    const rules = await ctx.db
+      .query("categoryRules")
+      .withIndex("by_syncKey", (q) => q.eq("syncKey", key))
+      .collect();
+    return rules
+      .map((r) => ({ id: r._id, match: r.match, label: r.label }))
+      .sort((a, b) => a.match.localeCompare(b.match));
+  },
+});
+
+export const deleteRule = mutation({
+  args: { syncKey: v.string(), id: v.id("categoryRules") },
+  handler: async (ctx, args) => {
+    const rule = await ctx.db.get(args.id);
+    if (rule && rule.syncKey === normalizeKey(args.syncKey)) {
+      await ctx.db.delete(args.id);
     }
   },
 });
